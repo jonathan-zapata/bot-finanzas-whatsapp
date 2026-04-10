@@ -91,7 +91,7 @@ app.post('/webhook', async (req, res) => {
         
         const chatCompletion = await ai.chat.completions.create({
             messages: [{ role: 'user', content: prompt }],
-            model: 'llama3-8b-8192',
+            model: 'meta-llama/llama-prompt-guard-2-86m',
             response_format: { type: "json_object" }
         });
 
