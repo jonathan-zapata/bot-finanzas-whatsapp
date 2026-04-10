@@ -86,21 +86,26 @@ app.post('/webhook', async (req, res) => {
 
         console.log(`Mensaje recibido de ${numeroUsuario}: ${textoUsuario}`);
 
-        // PRUEBA DE FUEGO: Le contestamos inmediatamente
-        await enviarMensajeWhatsApp(numeroUsuario, `🤖 ¡Hola! Recibí tu mensaje: "${textoUsuario}". Los cables de envío funcionan perfecto.`);
-
-        /* NOTA TÉCNICA:
-        Comento temporalmente la IA y la DB para que la llave falsa de OpenAI 
-        no rompa la prueba de envío de WhatsApp. Lo activaremos en el próximo paso.
-        */
+        // 1. EXTRAER DATOS CON IA
+        const prompt = `Actúa como un asistente financiero. Extrae el servicio y el monto del siguiente mensaje del usuario: "${textoUsuario}". Responde ÚNICAMENTE con un objeto JSON válido con las claves "servicio" (texto) y "monto" (número). Si no detectas un monto, pon 0.`;
         
-        // const prompt = `Extrae...`;
-        // const chatCompletion = await ai.chat...
-        // const datos = ...
-        // await supabase.from('pagos').insert([...]);
+        const chatCompletion = await ai.chat.completions.create({
+            messages: [{ role: 'user', content: prompt }],
+            model: 'llama3-8b-8192',
+            response_format: { type: "json_object" }
+        });
+
+        const datos = JSON.parse(chatCompletion.choices[0].message.content);
+        console.log("🧠 IA extrajo:", datos);
+
+        // 2. CONTESTAR POR WHATSAPP CON LOS DATOS
+        await enviarMensajeWhatsApp(numeroUsuario, `✅ IA Procesado:\nServicio: ${datos.servicio}\nMonto: $${datos.monto}`);
+
+        // NOTA: La conexión a Supabase sigue comentada. 
+        // La activaremos en el próximo paso tras confirmar que la IA razona bien.
 
     } catch (error) {
-        console.error('Error procesando webhook:', error.message);
+        console.error('Error procesando webhook:', error);
     }
 });
 
