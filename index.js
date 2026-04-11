@@ -89,9 +89,13 @@ app.post('/webhook', async (req, res) => {
 
         console.log(`Mensaje recibido de ${numeroUsuario}: ${textoUsuario}`);
 
-        // 1. EXTRAER DATOS CON IA
-        const prompt = `Actúa como un asistente financiero. Extrae el servicio y el monto del siguiente mensaje del usuario: "${textoUsuario}". Responde ÚNICAMENTE con un objeto JSON válido con las claves "servicio" (texto) y "monto" (número). Si no detectas un monto, pon 0.`;
-        
+        // 1. EXTRAER DATOS CON IA (AHORA CON DIVISAS)
+        const prompt = `Actúa como un asistente financiero en Uruguay. Extrae el servicio, el monto y la divisa del siguiente mensaje: "${textoUsuario}". 
+        Reglas para la divisa: 
+        - Si menciona dólares, usd, u$s o verdes, usa "USD". 
+        - Si menciona pesos, $, o NO ESPECIFICA moneda, asume "UYU".
+        Responde ÚNICAMENTE con un objeto JSON válido con las claves "servicio" (texto), "monto" (número) y "divisa" (texto). Si no detectas un monto, pon 0 en monto.`;
+                
         const chatCompletion = await ai.chat.completions.create({
             messages: [{ role: 'user', content: prompt }],
             model: 'llama-3.1-8b-instant',
@@ -102,23 +106,28 @@ app.post('/webhook', async (req, res) => {
         console.log("🧠 IA extrajo:", datos);
 
         // 2. LÓGICA DE NEGOCIO Y PERSISTENCIA
-        // Si hay un monto válido, lo guardamos.
         if (datos.monto > 0 && datos.servicio) {
             
-            // Insertamos en Supabase
+            // Insertamos en Supabase (ahora con divisa)
             const { error } = await supabase
                 .from('pagos')
                 .insert([
-                    { telefono: numeroUsuario, servicio: datos.servicio, monto: datos.monto }
+                    { 
+                        telefono: numeroUsuario, 
+                        servicio: datos.servicio, 
+                        monto: datos.monto,
+                        divisa: datos.divisa // <--- NUEVO
+                    }
                 ]);
 
             if (error) {
                 console.error("❌ Error guardando en Supabase:", error);
-                await enviarMensajeWhatsApp(numeroUsuario, "Hubo un error al guardar tu pago en la bóveda 😔. Intentá de nuevo.");
+                await enviarMensajeWhatsApp(numeroUsuario, "Hubo un error al guardar tu pago. Intentá de nuevo.");
             } else {
                 console.log("✅ Pago guardado exitosamente en BD.");
-                // Confirmamos al usuario de forma amigable
-                await enviarMensajeWhatsApp(numeroUsuario, `✅ ¡Anotado!\nGuardé un pago de *$${datos.monto}* para *${datos.servicio}*.`);
+                
+                // Confirmamos al usuario, mostrando explícitamente la moneda que asumimos
+                await enviarMensajeWhatsApp(numeroUsuario, `✅ ¡Anotado!\nGuardé un pago de *${datos.monto} ${datos.divisa}* para *${datos.servicio}*.`);
             }
 
         } else {
