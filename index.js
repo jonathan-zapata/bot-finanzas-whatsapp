@@ -89,13 +89,14 @@ app.post('/webhook', async (req, res) => {
 
         console.log(`Mensaje recibido de ${numeroUsuario}: ${textoUsuario}`);
 
-        // 1. EXTRAER DATOS CON IA (AHORA CON DIVISAS)
-        const prompt = `Actúa como un asistente financiero en Uruguay. Extrae el servicio, el monto y la divisa del siguiente mensaje: "${textoUsuario}". 
-        Reglas para la divisa: 
-        - Si menciona dólares, usd, u$s o verdes, usa "USD". 
-        - Si menciona pesos, $, o NO ESPECIFICA moneda, asume "UYU".
-        Responde ÚNICAMENTE con un objeto JSON válido con las claves "servicio" (texto), "monto" (número) y "divisa" (texto). Si no detectas un monto, pon 0 en monto.`;
-                
+        // 1. EXTRAER DATOS CON IA (AHORA CON PLAN DE PAGOS)
+        const prompt = `Actúa como un asistente financiero en Uruguay. Extrae servicio, monto, divisa, metodo_pago y cuotas del siguiente mensaje: "${textoUsuario}". 
+                Reglas: 
+                - Divisa: Si menciona dólares/usd usa "USD". Si menciona pesos/$ o no especifica, usa "UYU".
+                - metodo_pago: Si menciona tarjeta de crédito, mastercard, visa o cuotas, usa "credito". Si menciona débito, usa "debito". Por defecto usa "efectivo".
+                - cuotas: Número entero. Si dice "en 6 cuotas" es 6. Si no menciona cuotas, es 1.
+                Responde ÚNICAMENTE con un objeto JSON válido con las claves: "servicio" (texto), "monto" (número), "divisa" (texto), "metodo_pago" (texto) y "cuotas" (número). Si no hay monto, pon 0.`;
+                        
         const chatCompletion = await ai.chat.completions.create({
             messages: [{ role: 'user', content: prompt }],
             model: 'llama-3.1-8b-instant',
