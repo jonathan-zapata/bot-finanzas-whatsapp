@@ -91,20 +91,20 @@ app.post('/webhook', async (req, res) => {
 
         const fechaHoy = new Date().toISOString().split('T')[0];
 
-        // 1. EXTRAER DATOS CON IA (AHORA CON PLAN DE PAGOS)
+        // 1. EXTRAER DATOS CON IA (ESTRICTO)
         const prompt = `Actúa como un asistente financiero en Uruguay. Hoy es ${fechaHoy}.
-        Analiza: "${textoUsuario}".
+        Analiza el siguiente mensaje del usuario: "${textoUsuario}".
 
-        Extrae los datos en este formato JSON:
+        Extrae los datos en este formato JSON exacto:
         - servicio: nombre del gasto.
         - monto: número.
-        - divisa: "USD" o "UYU".
-        - metodo_pago: "credito", "debito" o "efectivo".
-        - cuotas: número.
-        - categoria: Clasifica ÚNICAMENTE en uno de estos rubros: [Vivienda, Alimentación, Transporte, Servicios, Salud, Educación, Ocio, Otros].
-        - fecha: La fecha del gasto en formato YYYY-MM-DD. Si el usuario dice "ayer" o "el lunes", calcúlala basándote en que hoy es ${fechaHoy}. Si no especifica, usa ${fechaHoy}.
+        - divisa: SOLO DEBE SER "USD" o "UYU". Si no se especifica, usa "UYU".
+        - metodo_pago: SOLO DEBE SER "credito", "debito", o "efectivo". Bajo ninguna circunstancia uses otra palabra. Si dice transferencia o banco, usa "debito". Por defecto usa "efectivo".
+        - cuotas: número entero. Si no especifica, es 1.
+        - categoria: SOLO DEBE SER una de estas: [Vivienda, Alimentación, Transporte, Servicios, Salud, Educación, Ocio, Otros]. No inventes categorías.
+        - fecha_gasto: La fecha en formato YYYY-MM-DD. Si el usuario dice "ayer" o "el lunes pasado", calcula la fecha real tomando como base que hoy es ${fechaHoy}. Si no especifica, usa ${fechaHoy}.
 
-        Responde SOLO el JSON.`;
+        Responde ÚNICAMENTE con el objeto JSON estructurado. No agregues texto adicional.`;
                         
         const chatCompletion = await ai.chat.completions.create({
             messages: [{ role: 'user', content: prompt }],
@@ -118,7 +118,7 @@ app.post('/webhook', async (req, res) => {
         // 2. LÓGICA DE NEGOCIO Y PERSISTENCIA
         if (datos.monto > 0 && datos.servicio) {
             
-            // Insertamos en Supabase (ahora con divisa)
+            // Insertamos en Supabase (Asegurando enviar TODOS los datos)
             const { error } = await supabase
                 .from('pagos')
                 .insert([
@@ -127,8 +127,10 @@ app.post('/webhook', async (req, res) => {
                         servicio: datos.servicio, 
                         monto: datos.monto,
                         divisa: datos.divisa,
-                        metodo_pago: datos.metodo_pago, // <--- NUEVO
-                        cuotas: datos.cuotas            // <--- NUEVO
+                        metodo_pago: datos.metodo_pago,
+                        cuotas: datos.cuotas,
+                        categoria: datos.categoria,      // <--- AHORA SÍ ENVIAMOS LA CATEGORÍA
+                        fecha_gasto: datos.fecha_gasto   // <--- AHORA SÍ ENVIAMOS LA FECHA CALCULADA
                     }
                 ]);
 
@@ -136,15 +138,15 @@ app.post('/webhook', async (req, res) => {
                 console.error("❌ Error guardando en Supabase:", error);
                 await enviarMensajeWhatsApp(numeroUsuario, "Hubo un error al guardar tu pago. Intentá de nuevo.");
             } else {
-                // Mensaje de confirmación dinámico
-                let mensajeConfirmacion = `✅ ¡Anotado!\nGuardé un pago de *${datos.monto} ${datos.divisa}* para *${datos.servicio}*.`;
+                // Mensaje de confirmación dinámico (mostrando los nuevos datos para verificar)
+                let mensajeConfirmacion = `✅ ¡Anotado!\nGuardé un pago de *${datos.monto} ${datos.divisa}* para *${datos.servicio}*.\n📂 Rubro: ${datos.categoria}\n📅 Fecha: ${datos.fecha_gasto}`;
 
                 if (datos.cuotas > 1) {
                     mensajeConfirmacion += `\n💳 Registrado en *${datos.cuotas} cuotas*.`;
                 }
                 await enviarMensajeWhatsApp(numeroUsuario, mensajeConfirmacion);
             }
-
+            
         } else {
             // Si el monto es 0 o no hay servicio (Ej: Dijo "Hola")
             await enviarMensajeWhatsApp(numeroUsuario, "¡Hola! 👋 Soy tu asistente financiero. Contame qué pagaste hoy (ej: 'Pagué 2000 de Antel') y te lo anoto en tu registro.");
