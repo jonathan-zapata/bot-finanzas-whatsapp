@@ -89,13 +89,22 @@ app.post('/webhook', async (req, res) => {
 
         console.log(`Mensaje recibido de ${numeroUsuario}: ${textoUsuario}`);
 
+        const fechaHoy = new Date().toISOString().split('T')[0];
+
         // 1. EXTRAER DATOS CON IA (AHORA CON PLAN DE PAGOS)
-        const prompt = `Actúa como un asistente financiero en Uruguay. Extrae servicio, monto, divisa, metodo_pago y cuotas del siguiente mensaje: "${textoUsuario}". 
-                Reglas: 
-                - Divisa: Si menciona dólares/usd usa "USD". Si menciona pesos/$ o no especifica, usa "UYU".
-                - metodo_pago: Si menciona tarjeta de crédito, mastercard, visa o cuotas, usa "credito". Si menciona débito, usa "debito". Por defecto usa "efectivo".
-                - cuotas: Número entero. Si dice "en 6 cuotas" es 6. Si no menciona cuotas, es 1.
-                Responde ÚNICAMENTE con un objeto JSON válido con las claves: "servicio" (texto), "monto" (número), "divisa" (texto), "metodo_pago" (texto) y "cuotas" (número). Si no hay monto, pon 0.`;
+        const prompt = `Actúa como un asistente financiero en Uruguay. Hoy es ${fechaHoy}.
+        Analiza: "${textoUsuario}".
+
+        Extrae los datos en este formato JSON:
+        - servicio: nombre del gasto.
+        - monto: número.
+        - divisa: "USD" o "UYU".
+        - metodo_pago: "credito", "debito" o "efectivo".
+        - cuotas: número.
+        - categoria: Clasifica ÚNICAMENTE en uno de estos rubros: [Vivienda, Alimentación, Transporte, Servicios, Salud, Educación, Ocio, Otros].
+        - fecha: La fecha del gasto en formato YYYY-MM-DD. Si el usuario dice "ayer" o "el lunes", calcúlala basándote en que hoy es ${fechaHoy}. Si no especifica, usa ${fechaHoy}.
+
+        Responde SOLO el JSON.`;
                         
         const chatCompletion = await ai.chat.completions.create({
             messages: [{ role: 'user', content: prompt }],
