@@ -89,22 +89,33 @@ app.post('/webhook', async (req, res) => {
 
         console.log(`Mensaje recibido de ${numeroUsuario}: ${textoUsuario}`);
 
-        const fechaHoy = new Date().toISOString().split('T')[0];
+        // --- INICIO GENERADOR DE CALENDARIO ---
+        const hoy = new Date();
+        const diasSemana = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+        let contextoFechas = `Hoy es ${diasSemana[hoy.getDay()]} ${hoy.toISOString().split('T')[0]}.\nCalendario de referencia de los últimos 7 días:\n`;
+        
+        for (let i = 1; i <= 7; i++) {
+            let fechaAnterior = new Date(hoy);
+            fechaAnterior.setDate(hoy.getDate() - i);
+            contextoFechas += `- ${diasSemana[fechaAnterior.getDay()]}: ${fechaAnterior.toISOString().split('T')[0]}\n`;
+        }
+        // --- FIN GENERADOR DE CALENDARIO ---
 
-        // 1. EXTRAER DATOS CON IA (ESTRICTO)
-        const prompt = `Actúa como un asistente financiero en Uruguay. Hoy es ${fechaHoy}.
-        Analiza el siguiente mensaje del usuario: "${textoUsuario}".
+        // 1. EXTRAER DATOS CON IA (AHORA CON MACHETE DE FECHAS)
+        const prompt = `Actúa como un asistente financiero en Uruguay. 
+        ${contextoFechas}
+        Analiza el siguiente mensaje: "${textoUsuario}".
 
         Extrae los datos en este formato JSON exacto:
         - servicio: nombre del gasto.
         - monto: número.
-        - divisa: SOLO DEBE SER "USD" o "UYU". Si no se especifica, usa "UYU".
-        - metodo_pago: SOLO DEBE SER "credito", "debito", o "efectivo". Bajo ninguna circunstancia uses otra palabra. Si dice transferencia o banco, usa "debito". Por defecto usa "efectivo".
+        - divisa: SOLO "USD" o "UYU".
+        - metodo_pago: SOLO "credito", "debito", o "efectivo".
         - cuotas: número entero. Si no especifica, es 1.
-        - categoria: SOLO DEBE SER una de estas: [Vivienda, Alimentación, Transporte, Servicios, Salud, Educación, Ocio, Otros]. No inventes categorías.
-        - fecha_gasto: La fecha en formato YYYY-MM-DD. Si el usuario dice "ayer" o "el lunes pasado", calcula la fecha real tomando como base que hoy es ${fechaHoy}. Si no especifica, usa ${fechaHoy}.
+        - categoria: SOLO una de estas: [Vivienda, Alimentación, Transporte, Servicios, Salud, Educación, Ocio, Otros].
+        - fecha_gasto: Formato YYYY-MM-DD. Usa el calendario de referencia provisto arriba para hacer coincidir días relativos (como "ayer", "el lunes", "el martes pasado") con su fecha exacta. Si no especifica fecha, usa la de Hoy.
 
-        Responde ÚNICAMENTE con el objeto JSON estructurado. No agregues texto adicional.`;
+        Responde ÚNICAMENTE con el objeto JSON.`;
                         
         const chatCompletion = await ai.chat.completions.create({
             messages: [{ role: 'user', content: prompt }],
@@ -146,7 +157,7 @@ app.post('/webhook', async (req, res) => {
                 }
                 await enviarMensajeWhatsApp(numeroUsuario, mensajeConfirmacion);
             }
-            
+
         } else {
             // Si el monto es 0 o no hay servicio (Ej: Dijo "Hola")
             await enviarMensajeWhatsApp(numeroUsuario, "¡Hola! 👋 Soy tu asistente financiero. Contame qué pagaste hoy (ej: 'Pagué 2000 de Antel') y te lo anoto en tu registro.");
