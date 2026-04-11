@@ -71,6 +71,9 @@ app.get('/webhook', (req, res) => {
 // ==========================================
 // RUTA 2: RECEPCIÓN DE MENSAJES
 // ==========================================
+// ==========================================
+// RUTA 2: RECEPCIÓN DE MENSAJES Y GUARDADO EN BD
+// ==========================================
 app.post('/webhook', async (req, res) => {
     res.sendStatus(200); // Responder rápido a Meta
 
@@ -98,11 +101,30 @@ app.post('/webhook', async (req, res) => {
         const datos = JSON.parse(chatCompletion.choices[0].message.content);
         console.log("🧠 IA extrajo:", datos);
 
-        // 2. CONTESTAR POR WHATSAPP CON LOS DATOS
-        await enviarMensajeWhatsApp(numeroUsuario, `✅ IA Procesado:\nServicio: ${datos.servicio}\nMonto: $${datos.monto}`);
+        // 2. LÓGICA DE NEGOCIO Y PERSISTENCIA
+        // Si hay un monto válido, lo guardamos.
+        if (datos.monto > 0 && datos.servicio) {
+            
+            // Insertamos en Supabase
+            const { error } = await supabase
+                .from('pagos')
+                .insert([
+                    { telefono: numeroUsuario, servicio: datos.servicio, monto: datos.monto }
+                ]);
 
-        // NOTA: La conexión a Supabase sigue comentada. 
-        // La activaremos en el próximo paso tras confirmar que la IA razona bien.
+            if (error) {
+                console.error("❌ Error guardando en Supabase:", error);
+                await enviarMensajeWhatsApp(numeroUsuario, "Hubo un error al guardar tu pago en la bóveda 😔. Intentá de nuevo.");
+            } else {
+                console.log("✅ Pago guardado exitosamente en BD.");
+                // Confirmamos al usuario de forma amigable
+                await enviarMensajeWhatsApp(numeroUsuario, `✅ ¡Anotado!\nGuardé un pago de *$${datos.monto}* para *${datos.servicio}*.`);
+            }
+
+        } else {
+            // Si el monto es 0 o no hay servicio (Ej: Dijo "Hola")
+            await enviarMensajeWhatsApp(numeroUsuario, "¡Hola! 👋 Soy tu asistente financiero. Contame qué pagaste hoy (ej: 'Pagué 2000 de Antel') y te lo anoto en tu registro.");
+        }
 
     } catch (error) {
         console.error('Error procesando webhook:', error);
