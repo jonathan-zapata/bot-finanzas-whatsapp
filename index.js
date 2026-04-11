@@ -116,7 +116,9 @@ app.post('/webhook', async (req, res) => {
                         telefono: numeroUsuario, 
                         servicio: datos.servicio, 
                         monto: datos.monto,
-                        divisa: datos.divisa // <--- NUEVO
+                        divisa: datos.divisa,
+                        metodo_pago: datos.metodo_pago, // <--- NUEVO
+                        cuotas: datos.cuotas            // <--- NUEVO
                     }
                 ]);
 
@@ -124,10 +126,13 @@ app.post('/webhook', async (req, res) => {
                 console.error("❌ Error guardando en Supabase:", error);
                 await enviarMensajeWhatsApp(numeroUsuario, "Hubo un error al guardar tu pago. Intentá de nuevo.");
             } else {
-                console.log("✅ Pago guardado exitosamente en BD.");
-                
-                // Confirmamos al usuario, mostrando explícitamente la moneda que asumimos
-                await enviarMensajeWhatsApp(numeroUsuario, `✅ ¡Anotado!\nGuardé un pago de *${datos.monto} ${datos.divisa}* para *${datos.servicio}*.`);
+                // Mensaje de confirmación dinámico
+                let mensajeConfirmacion = `✅ ¡Anotado!\nGuardé un pago de *${datos.monto} ${datos.divisa}* para *${datos.servicio}*.`;
+
+                if (datos.cuotas > 1) {
+                    mensajeConfirmacion += `\n💳 Registrado en *${datos.cuotas} cuotas*.`;
+                }
+                await enviarMensajeWhatsApp(numeroUsuario, mensajeConfirmacion);
             }
 
         } else {
