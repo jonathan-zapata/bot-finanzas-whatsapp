@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",
@@ -13,7 +13,8 @@
     "@supabase/supabase-js": "^2.103.0",
     "dotenv": "^17.4.1",
     "express": "^5.2.1",
-    "openai": "^6.34.0"
+    "openai": "^6.34.0",
+    "zod": "^3.24.1"
   },
   "type": "module"
 }
