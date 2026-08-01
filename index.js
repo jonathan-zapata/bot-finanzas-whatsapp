@@ -2,12 +2,12 @@ import express from 'express';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { config } from './src/config.js';
-import { crearClienteWhatsApp, verificarFirmaWebhook } from './src/whatsappClient.js';
-import { manejarMensajeEntrante } from './src/messageHandler.js';
+import { createWhatsAppClient, verifyWebhookSignature } from './src/whatsappClient.js';
+import { handleIncomingMessage } from './src/messageHandler.js';
 
 const app = express();
-// Guardamos el body crudo (rawBody) porque la verificación de firma de Meta se
-// calcula sobre los bytes exactos recibidos, no sobre el JSON re-serializado.
+// We keep the raw body (rawBody) because Meta's signature verification is
+// computed over the exact bytes received, not over the re-serialized JSON.
 app.use(
     express.json({
         verify: (req, _res, buf) => {
@@ -18,10 +18,10 @@ app.use(
 
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 const ai = new OpenAI({ apiKey: config.llmApiKey, baseURL: config.llmBaseUrl });
-const whatsapp = crearClienteWhatsApp({ token: config.whatsappToken, phoneNumberId: config.phoneNumberId });
+const whatsapp = createWhatsAppClient({ token: config.whatsappToken, phoneNumberId: config.phoneNumberId });
 
 // ==========================================
-// RUTA 1: VERIFICACIÓN DE META
+// ROUTE 1: META VERIFICATION
 // ==========================================
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
@@ -36,22 +36,22 @@ app.get('/webhook', (req, res) => {
 });
 
 // ==========================================
-// RUTA 2: RECEPCIÓN DE MENSAJES
+// ROUTE 2: MESSAGE RECEPTION
 // ==========================================
 app.post('/webhook', async (req, res) => {
-    const firma = req.get('x-hub-signature-256');
-    if (!verificarFirmaWebhook(config.whatsappAppSecret, req.rawBody, firma)) {
-        console.warn('⚠️ Firma de webhook inválida — request rechazado.');
+    const signature = req.get('x-hub-signature-256');
+    if (!verifyWebhookSignature(config.whatsappAppSecret, req.rawBody, signature)) {
+        console.warn('⚠️ Invalid webhook signature — request rejected.');
         res.sendStatus(401);
         return;
     }
 
-    // Procesamos ANTES de responder: en un host serverless (Cloud Run, Vercel) el
-    // CPU se corta o se throttlea apenas se manda la respuesta, así que cualquier
-    // trabajo async después de un sendStatus(200) temprano puede quedar cortado a
-    // mitad de camino. Esto además cierra un gap de confiabilidad que existía en
-    // cualquier host: si el proceso se caía entre el ack y el guardado, Meta ya
-    // pensaba que estaba procesado y no reintentaba — el gasto se perdía en silencio.
+    // We process BEFORE responding: on a serverless host (Cloud Run, Vercel)
+    // the CPU is cut or throttled as soon as the response is sent, so any
+    // async work after an early sendStatus(200) can get cut off mid-flight.
+    // This also closes a reliability gap that existed on any host: if the
+    // process crashed between the ack and the save, Meta would already think
+    // it was processed and wouldn't retry — the expense would be silently lost.
     try {
         const entry = req.body.entry?.[0];
         const changes = entry?.changes?.[0];
@@ -62,31 +62,31 @@ app.post('/webhook', async (req, res) => {
             return;
         }
 
-        const numeroUsuario = message.from;
+        const userPhone = message.from;
         const messageId = message.id;
-        const textoUsuario = message.text.body;
+        const userText = message.text.body;
 
-        console.log(`Mensaje recibido de ${numeroUsuario}: ${textoUsuario}`);
+        console.log(`Message received from ${userPhone}: ${userText}`);
 
-        await manejarMensajeEntrante({
+        await handleIncomingMessage({
             supabase,
             ai,
             whatsapp,
-            numeroUsuario,
+            userPhone,
             messageId,
-            textoUsuario,
-            modelo: config.llmModel,
-            ventanaConfirmacionMin: config.ventanaConfirmacionMin,
+            userText,
+            model: config.llmModel,
+            confirmationWindowMinutes: config.confirmationWindowMinutes,
         });
         res.sendStatus(200);
     } catch (error) {
-        console.error('Error procesando webhook:', error);
-        // 500 en vez de 200: dejamos que Meta reintente la entrega. La idempotencia
-        // por message_id hace que un reintento sea seguro (no duplica nada).
+        console.error('Error processing webhook:', error);
+        // 500 instead of 200: we let Meta retry delivery. Idempotency by
+        // message_id makes a retry safe (it won't duplicate anything).
         res.sendStatus(500);
     }
 });
 
 app.listen(config.port, () => {
-    console.log(`Servidor activo en puerto ${config.port}`);
+    console.log(`Server running on port ${config.port}`);
 });

@@ -1,57 +1,57 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { manejarMensajeEntrante } from '../src/messageHandler.js';
+import { handleIncomingMessage } from '../src/messageHandler.js';
 
-// Estado en memoria + deps fakeadas: probamos la máquina de estados del handler
-// sin simular Supabase ni la red (inyección de dependencias, la costura fakeable).
-function crearEntorno({ pagosIniciales = [], pendientes = {} } = {}) {
+// In-memory state + faked deps: we test the handler's state machine without
+// simulating Supabase or the network (dependency injection, the fakeable seam).
+function createEnvironment({ initialPayments = [], pending = {} } = {}) {
     const state = {
-        pagos: [...pagosIniciales],
-        pendientes: new Map(Object.entries(pendientes)),
+        payments: [...initialPayments],
+        pending: new Map(Object.entries(pending)),
     };
     return state;
 }
 
-function hacerDeps(state, { extraccion, errorLLM = false } = {}) {
+function makeDeps(state, { extraction, llmError = false } = {}) {
     return {
-        yaFueProcesado: async (_s, messageId) => state.pagos.some((p) => p.message_id === messageId),
-        extraerGasto: async () => {
-            if (errorLLM) throw new Error('timeout');
-            return extraccion;
+        wasAlreadyProcessed: async (_s, messageId) => state.payments.some((p) => p.message_id === messageId),
+        extractExpense: async () => {
+            if (llmError) throw new Error('timeout');
+            return extraction;
         },
-        buscarDuplicadoExacto: async (_s, { telefono, servicio, monto, divisa }) => {
-            const matches = state.pagos.filter(
-                (p) => p.telefono === telefono && p.servicio === servicio && p.monto === monto && p.divisa === divisa
+        findExactDuplicate: async (_s, { phone, servicio, monto, divisa }) => {
+            const matches = state.payments.filter(
+                (p) => p.telefono === phone && p.servicio === servicio && p.monto === monto && p.divisa === divisa
             );
             return matches.length ? matches[matches.length - 1] : null;
         },
-        guardarPago: async (_s, { telefono, messageId, datos }) => {
-            if (state.pagos.some((p) => p.message_id === messageId)) return { duplicado: true };
-            state.pagos.push({ telefono, message_id: messageId, ...datos });
-            return { duplicado: false };
+        savePayment: async (_s, { phone, messageId, data }) => {
+            if (state.payments.some((p) => p.message_id === messageId)) return { duplicate: true };
+            state.payments.push({ telefono: phone, message_id: messageId, ...data });
+            return { duplicate: false };
         },
-        obtenerPendiente: async (_s, telefono) => state.pendientes.get(telefono) || null,
-        guardarPendiente: async (_s, { telefono, payload, motivo }) => {
-            state.pendientes.set(telefono, { telefono, payload, motivo, created_at: new Date().toISOString() });
+        getPending: async (_s, phone) => state.pending.get(phone) || null,
+        savePending: async (_s, { phone, payload, reason }) => {
+            state.pending.set(phone, { telefono: phone, payload, motivo: reason, created_at: new Date().toISOString() });
         },
-        borrarPendiente: async (_s, telefono) => {
-            state.pendientes.delete(telefono);
+        deletePending: async (_s, phone) => {
+            state.pending.delete(phone);
         },
     };
 }
 
-function crearWhatsappFake() {
-    const mensajes = [];
+function createFakeWhatsapp() {
+    const messages = [];
     return {
-        mensajes,
-        async enviarMensaje(destino, texto) {
-            mensajes.push({ destino, texto });
+        messages,
+        async sendMessage(recipient, text) {
+            messages.push({ recipient, text });
         },
     };
 }
 
-const TEL = '59891111111';
-const datosBase = {
+const PHONE = '59891111111';
+const baseData = {
     servicio: 'Antel',
     monto: 2000,
     divisa: 'UYU',
@@ -61,132 +61,132 @@ const datosBase = {
     fecha_gasto: '2026-08-01',
 };
 
-function invocar(state, deps, { messageId = 'msg-nuevo', texto = 'Pagué 2000 de Antel' } = {}) {
-    const whatsapp = crearWhatsappFake();
-    return manejarMensajeEntrante({
+function invoke(state, deps, { messageId = 'msg-new', text = 'Pagué 2000 de Antel' } = {}) {
+    const whatsapp = createFakeWhatsapp();
+    return handleIncomingMessage({
         supabase: {},
         ai: {},
         whatsapp,
-        numeroUsuario: TEL,
+        userPhone: PHONE,
         messageId,
-        textoUsuario: texto,
+        userText: text,
         deps,
     }).then(() => whatsapp);
 }
 
-test('idempotencia: ignora un message_id ya procesado sin escribir ni responder', async () => {
-    const state = crearEntorno({ pagosIniciales: [{ telefono: TEL, message_id: 'msg-repetido', ...datosBase }] });
-    const deps = hacerDeps(state, { extraccion: { esGasto: true, datos: datosBase } });
-    const whatsapp = await invocar(state, deps, { messageId: 'msg-repetido' });
+test('idempotency: ignores an already-processed message_id without writing or replying', async () => {
+    const state = createEnvironment({ initialPayments: [{ telefono: PHONE, message_id: 'msg-repeated', ...baseData }] });
+    const deps = makeDeps(state, { extraction: { isExpense: true, data: baseData } });
+    const whatsapp = await invoke(state, deps, { messageId: 'msg-repeated' });
 
-    assert.equal(state.pagos.length, 1);
-    assert.equal(whatsapp.mensajes.length, 0);
+    assert.equal(state.payments.length, 1);
+    assert.equal(whatsapp.messages.length, 0);
 });
 
-test('mensaje que no es gasto → responde bienvenida', async () => {
-    const state = crearEntorno();
-    const deps = hacerDeps(state, { extraccion: { esGasto: false } });
-    const whatsapp = await invocar(state, deps, { texto: 'Hola' });
+test('message that is not an expense → replies with welcome', async () => {
+    const state = createEnvironment();
+    const deps = makeDeps(state, { extraction: { isExpense: false } });
+    const whatsapp = await invoke(state, deps, { text: 'Hola' });
 
-    assert.equal(state.pagos.length, 0);
-    assert.match(whatsapp.mensajes[0].texto, /asistente financiero/);
+    assert.equal(state.payments.length, 0);
+    assert.match(whatsapp.messages[0].text, /asistente financiero/);
 });
 
-test('gasto sin duplicado → guarda y confirma', async () => {
-    const state = crearEntorno();
-    const deps = hacerDeps(state, { extraccion: { esGasto: true, datos: datosBase } });
-    const whatsapp = await invocar(state, deps);
+test('expense without duplicate → saves and confirms', async () => {
+    const state = createEnvironment();
+    const deps = makeDeps(state, { extraction: { isExpense: true, data: baseData } });
+    const whatsapp = await invoke(state, deps);
 
-    assert.equal(state.pagos.length, 1);
-    assert.match(whatsapp.mensajes[0].texto, /Anotado/);
+    assert.equal(state.payments.length, 1);
+    assert.match(whatsapp.messages[0].text, /Anotado/);
 });
 
-test('duplicado misma fecha → NO guarda, deja pendiente y pregunta', async () => {
-    const state = crearEntorno({
-        pagosIniciales: [{ telefono: TEL, message_id: 'seed', ...datosBase }],
+test('duplicate same date → does NOT save, leaves it pending and asks', async () => {
+    const state = createEnvironment({
+        initialPayments: [{ telefono: PHONE, message_id: 'seed', ...baseData }],
     });
-    const deps = hacerDeps(state, { extraccion: { esGasto: true, datos: datosBase } });
-    const whatsapp = await invocar(state, deps, { messageId: 'msg-nuevo' });
+    const deps = makeDeps(state, { extraction: { isExpense: true, data: baseData } });
+    const whatsapp = await invoke(state, deps, { messageId: 'msg-new' });
 
-    assert.equal(state.pagos.length, 1, 'no debe insertar el duplicado');
-    assert.ok(state.pendientes.has(TEL), 'debe quedar una confirmación pendiente');
-    assert.match(whatsapp.mensajes[0].texto, /Ya tenés anotado/);
+    assert.equal(state.payments.length, 1, 'must not insert the duplicate');
+    assert.ok(state.pending.has(PHONE), 'must leave a pending confirmation');
+    assert.match(whatsapp.messages[0].text, /Ya tenés anotado/);
 });
 
-test('duplicado de otra fecha → guarda igual y avisa (probable recurrente)', async () => {
-    const previo = { telefono: TEL, message_id: 'seed', ...datosBase, fecha_gasto: '2026-07-01' };
-    const state = crearEntorno({ pagosIniciales: [previo] });
-    const deps = hacerDeps(state, { extraccion: { esGasto: true, datos: datosBase } });
-    const whatsapp = await invocar(state, deps, { messageId: 'msg-nuevo' });
+test('duplicate on a different date → saves anyway and notifies (probably recurring)', async () => {
+    const previous = { telefono: PHONE, message_id: 'seed', ...baseData, fecha_gasto: '2026-07-01' };
+    const state = createEnvironment({ initialPayments: [previous] });
+    const deps = makeDeps(state, { extraction: { isExpense: true, data: baseData } });
+    const whatsapp = await invoke(state, deps, { messageId: 'msg-new' });
 
-    assert.equal(state.pagos.length, 2, 'debe insertar el gasto nuevo');
-    assert.match(whatsapp.mensajes[0].texto, /Anotado/);
-    assert.match(whatsapp.mensajes[0].texto, /ya tenías un gasto igual/);
+    assert.equal(state.payments.length, 2, 'must insert the new expense');
+    assert.match(whatsapp.messages[0].text, /Anotado/);
+    assert.match(whatsapp.messages[0].text, /ya tenías un gasto igual/);
 });
 
-test('respuesta "sí" a una pendiente → inserta el gasto guardado y confirma', async () => {
-    const state = crearEntorno({
-        pendientes: {
-            [TEL]: {
-                telefono: TEL,
-                payload: { messageId: 'orig', datos: datosBase },
-                motivo: 'duplicado_misma_fecha',
+test('"yes" reply to a pending confirmation → inserts the saved expense and confirms', async () => {
+    const state = createEnvironment({
+        pending: {
+            [PHONE]: {
+                telefono: PHONE,
+                payload: { messageId: 'orig', data: baseData },
+                motivo: 'duplicate_same_date',
                 created_at: new Date().toISOString(),
             },
         },
     });
-    const deps = hacerDeps(state, {});
-    const whatsapp = await invocar(state, deps, { messageId: 'reply-si', texto: 'sí, dale' });
+    const deps = makeDeps(state, {});
+    const whatsapp = await invoke(state, deps, { messageId: 'reply-yes', text: 'sí, dale' });
 
-    assert.equal(state.pagos.length, 1);
-    assert.equal(state.pagos[0].message_id, 'orig');
-    assert.ok(!state.pendientes.has(TEL), 'la pendiente debe limpiarse');
-    assert.match(whatsapp.mensajes[0].texto, /Anotado/);
+    assert.equal(state.payments.length, 1);
+    assert.equal(state.payments[0].message_id, 'orig');
+    assert.ok(!state.pending.has(PHONE), 'the pending confirmation must be cleared');
+    assert.match(whatsapp.messages[0].text, /Anotado/);
 });
 
-test('respuesta "no" a una pendiente → descarta sin guardar', async () => {
-    const state = crearEntorno({
-        pendientes: {
-            [TEL]: {
-                telefono: TEL,
-                payload: { messageId: 'orig', datos: datosBase },
-                motivo: 'duplicado_misma_fecha',
+test('"no" reply to a pending confirmation → discards without saving', async () => {
+    const state = createEnvironment({
+        pending: {
+            [PHONE]: {
+                telefono: PHONE,
+                payload: { messageId: 'orig', data: baseData },
+                motivo: 'duplicate_same_date',
                 created_at: new Date().toISOString(),
             },
         },
     });
-    const deps = hacerDeps(state, {});
-    const whatsapp = await invocar(state, deps, { messageId: 'reply-no', texto: 'no, es el mismo' });
+    const deps = makeDeps(state, {});
+    const whatsapp = await invoke(state, deps, { messageId: 'reply-no', text: 'no, es el mismo' });
 
-    assert.equal(state.pagos.length, 0);
-    assert.ok(!state.pendientes.has(TEL));
-    assert.match(whatsapp.mensajes[0].texto, /no lo anoto/);
+    assert.equal(state.payments.length, 0);
+    assert.ok(!state.pending.has(PHONE));
+    assert.match(whatsapp.messages[0].text, /no lo anoto/);
 });
 
-test('respuesta ambigua a una pendiente → vuelve a preguntar y mantiene la pendiente', async () => {
-    const state = crearEntorno({
-        pendientes: {
-            [TEL]: {
-                telefono: TEL,
-                payload: { messageId: 'orig', datos: datosBase },
-                motivo: 'duplicado_misma_fecha',
+test('ambiguous reply to a pending confirmation → asks again and keeps it pending', async () => {
+    const state = createEnvironment({
+        pending: {
+            [PHONE]: {
+                telefono: PHONE,
+                payload: { messageId: 'orig', data: baseData },
+                motivo: 'duplicate_same_date',
                 created_at: new Date().toISOString(),
             },
         },
     });
-    const deps = hacerDeps(state, {});
-    const whatsapp = await invocar(state, deps, { messageId: 'reply-eh', texto: 'ni idea' });
+    const deps = makeDeps(state, {});
+    const whatsapp = await invoke(state, deps, { messageId: 'reply-eh', text: 'ni idea' });
 
-    assert.equal(state.pagos.length, 0);
-    assert.ok(state.pendientes.has(TEL), 'la pendiente debe seguir viva');
-    assert.match(whatsapp.mensajes[0].texto, /No te entendí/);
+    assert.equal(state.payments.length, 0);
+    assert.ok(state.pending.has(PHONE), 'the pending confirmation must still be alive');
+    assert.match(whatsapp.messages[0].text, /No te entendí/);
 });
 
-test('error del LLM → avisa al usuario en vez de fallar en silencio', async () => {
-    const state = crearEntorno();
-    const deps = hacerDeps(state, { errorLLM: true });
-    const whatsapp = await invocar(state, deps);
+test('LLM error → notifies the user instead of failing silently', async () => {
+    const state = createEnvironment();
+    const deps = makeDeps(state, { llmError: true });
+    const whatsapp = await invoke(state, deps);
 
-    assert.equal(state.pagos.length, 0);
-    assert.match(whatsapp.mensajes[0].texto, /problema procesando/);
+    assert.equal(state.payments.length, 0);
+    assert.match(whatsapp.messages[0].text, /problema procesando/);
 });

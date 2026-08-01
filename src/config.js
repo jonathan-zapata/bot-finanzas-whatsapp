@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const REQUERIDAS = [
+const REQUIRED_ENV_VARS = [
     'WEBHOOK_VERIFY_TOKEN',
     'WHATSAPP_APP_SECRET',
     'LLM_API_KEY',
@@ -13,10 +13,10 @@ const REQUERIDAS = [
     'PHONE_NUMBER_ID',
 ];
 
-const faltantes = REQUERIDAS.filter((clave) => !process.env[clave]);
-if (faltantes.length > 0) {
-    console.error(`❌ Faltan variables de entorno requeridas: ${faltantes.join(', ')}`);
-    console.error('   Revisá .env.example para ver la lista completa.');
+const missing = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
+if (missing.length > 0) {
+    console.error(`❌ Missing required environment variables: ${missing.join(', ')}`);
+    console.error('   Check .env.example for the full list.');
     process.exit(1);
 }
 
@@ -26,15 +26,16 @@ export const config = {
     whatsappAppSecret: process.env.WHATSAPP_APP_SECRET,
     llmApiKey: process.env.LLM_API_KEY,
     llmBaseUrl: process.env.LLM_BASE_URL,
-    // Sin default forzado a Groq: así podés apuntar a Ollama local (ej. "qwen2.5:7b")
-    // sin tocar código, solo cambiando LLM_MODEL y LLM_BASE_URL en el .env.
+    // No default forced to Groq: this lets you point to a local Ollama (e.g.
+    // "qwen2.5:7b") without touching code, just by changing LLM_MODEL and
+    // LLM_BASE_URL in .env.
     llmModel: process.env.LLM_MODEL || 'llama-3.1-8b-instant',
     supabaseUrl: process.env.SUPABASE_URL,
     supabaseKey: process.env.SUPABASE_KEY,
     whatsappToken: process.env.WHATSAPP_TOKEN,
     phoneNumberId: process.env.PHONE_NUMBER_ID,
-    // Ventana (en minutos) que una confirmación de duplicado queda pendiente
-    // antes de expirar. Si el usuario no responde en este tiempo, la pregunta
-    // caduca y su próximo mensaje se trata como uno nuevo.
-    ventanaConfirmacionMin: Number(process.env.VENTANA_CONFIRMACION_MIN) || 30,
+    // Window (in minutes) a duplicate confirmation stays pending before it
+    // expires. If the user doesn't reply within this time, the question lapses
+    // and their next message is treated as a new one.
+    confirmationWindowMinutes: Number(process.env.VENTANA_CONFIRMACION_MIN) || 30,
 };

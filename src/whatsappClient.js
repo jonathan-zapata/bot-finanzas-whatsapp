@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
 
 // ==========================================
-// CLIENTE DE ENVÍO (LA VOZ DEL BOT)
+// SENDING CLIENT (THE BOT'S VOICE)
 // ==========================================
-export function crearClienteWhatsApp({ token, phoneNumberId, fetchImpl = fetch }) {
-    async function enviarMensaje(telefonoDestino, texto) {
+export function createWhatsAppClient({ token, phoneNumberId, fetchImpl = fetch }) {
+    async function sendMessage(recipientPhone, text) {
         try {
-            const respuesta = await fetchImpl(
+            const response = await fetchImpl(
                 `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
                 {
                     method: 'POST',
@@ -16,43 +16,43 @@ export function crearClienteWhatsApp({ token, phoneNumberId, fetchImpl = fetch }
                     },
                     body: JSON.stringify({
                         messaging_product: 'whatsapp',
-                        to: telefonoDestino,
+                        to: recipientPhone,
                         type: 'text',
-                        text: { body: texto },
+                        text: { body: text },
                     }),
                 }
             );
 
-            const data = await respuesta.json();
-            if (!respuesta.ok) {
-                console.error('❌ Meta devolvió un error al enviar el mensaje:', JSON.stringify(data));
+            const data = await response.json();
+            if (!response.ok) {
+                console.error('❌ Meta returned an error sending the message:', JSON.stringify(data));
             } else {
-                console.log('✅ Mensaje enviado a Meta:', JSON.stringify(data));
+                console.log('✅ Message sent to Meta:', JSON.stringify(data));
             }
             return data;
         } catch (error) {
-            console.error('❌ Error enviando mensaje:', error);
+            console.error('❌ Error sending message:', error);
             return null;
         }
     }
 
-    return { enviarMensaje };
+    return { sendMessage };
 }
 
 // ==========================================
-// VERIFICACIÓN DE FIRMA (X-Hub-Signature-256)
+// SIGNATURE VERIFICATION (X-Hub-Signature-256)
 // ==========================================
-// Meta firma cada request con el App Secret. Sin esto, cualquiera que descubra
-// la URL del webhook puede postear datos falsos como si vinieran de WhatsApp.
-export function verificarFirmaWebhook(appSecret, rawBody, firmaHeader) {
-    if (!firmaHeader || !firmaHeader.startsWith('sha256=') || !rawBody) return false;
+// Meta signs every request with the App Secret. Without this, anyone who
+// discovers the webhook URL could post fake data pretending it came from WhatsApp.
+export function verifyWebhookSignature(appSecret, rawBody, signatureHeader) {
+    if (!signatureHeader || !signatureHeader.startsWith('sha256=') || !rawBody) return false;
 
-    const firmaRecibida = firmaHeader.slice('sha256='.length);
-    const firmaEsperada = crypto.createHmac('sha256', appSecret).update(rawBody).digest('hex');
+    const receivedSignature = signatureHeader.slice('sha256='.length);
+    const expectedSignature = crypto.createHmac('sha256', appSecret).update(rawBody).digest('hex');
 
-    const bufRecibida = Buffer.from(firmaRecibida, 'hex');
-    const bufEsperada = Buffer.from(firmaEsperada, 'hex');
-    if (bufRecibida.length !== bufEsperada.length) return false;
+    const receivedBuffer = Buffer.from(receivedSignature, 'hex');
+    const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+    if (receivedBuffer.length !== expectedBuffer.length) return false;
 
-    return crypto.timingSafeEqual(bufRecibida, bufEsperada);
+    return crypto.timingSafeEqual(receivedBuffer, expectedBuffer);
 }

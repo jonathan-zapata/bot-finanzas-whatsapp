@@ -1,200 +1,200 @@
-import { extraerGasto as extraerGastoReal } from './aiExtractor.js';
+import { extractExpense as extractExpenseReal } from './aiExtractor.js';
 import {
-    yaFueProcesado as yaFueProcesadoReal,
-    guardarPago as guardarPagoReal,
-    buscarDuplicadoExacto as buscarDuplicadoExactoReal,
-} from './pagosRepo.js';
+    wasAlreadyProcessed as wasAlreadyProcessedReal,
+    savePayment as savePaymentReal,
+    findExactDuplicate as findExactDuplicateReal,
+} from './paymentsRepo.js';
 import {
-    obtenerPendiente as obtenerPendienteReal,
-    guardarPendiente as guardarPendienteReal,
-    borrarPendiente as borrarPendienteReal,
-} from './confirmacionesRepo.js';
-import { interpretarRespuesta } from './respuestaParser.js';
+    getPending as getPendingReal,
+    savePending as savePendingReal,
+    deletePending as deletePendingReal,
+} from './pendingConfirmationsRepo.js';
+import { parseResponse } from './responseParser.js';
 
-const MENSAJE_BIENVENIDA =
+const WELCOME_MESSAGE =
     "¡Hola! 👋 Soy tu asistente financiero. Contame qué pagaste hoy (ej: 'Pagué 2000 de Antel en efectivo') y te lo anoto en tu registro.";
-const MENSAJE_ERROR_LLM = 'Hubo un problema procesando tu mensaje. Probá de nuevo en un momento 🙏';
-const MENSAJE_ERROR_GUARDADO = 'Hubo un error al guardar tu pago. Intentá de nuevo.';
-const MENSAJE_NO_ENTENDI =
+const LLM_ERROR_MESSAGE = 'Hubo un problema procesando tu mensaje. Probá de nuevo en un momento 🙏';
+const SAVE_ERROR_MESSAGE = 'Hubo un error al guardar tu pago. Intentá de nuevo.';
+const DIDNT_UNDERSTAND_MESSAGE =
     '🤔 No te entendí. Respondé *sí* para anotar el gasto igual, o *no* si es el mismo que ya tenías.';
-const MENSAJE_DESCARTADO = '👍 Listo, no lo anoto entonces.';
+const DISCARDED_MESSAGE = '👍 Listo, no lo anoto entonces.';
 
-function formatearConfirmacion(datos) {
-    let mensaje = `✅ ¡Anotado!\nGuardé un pago de *${datos.monto} ${datos.divisa}* para *${datos.servicio}*.\n📂 Rubro: ${datos.categoria}\n📅 Fecha: ${datos.fecha_gasto}`;
-    if (datos.cuotas > 1) {
-        mensaje += `\n💳 Registrado en *${datos.cuotas} cuotas*.`;
+function formatConfirmation(data) {
+    let message = `✅ ¡Anotado!\nGuardé un pago de *${data.monto} ${data.divisa}* para *${data.servicio}*.\n📂 Rubro: ${data.categoria}\n📅 Fecha: ${data.fecha_gasto}`;
+    if (data.cuotas > 1) {
+        message += `\n💳 Registrado en *${data.cuotas} cuotas*.`;
     }
-    return mensaje;
+    return message;
 }
 
-function preguntaDuplicado(datos, existente) {
-    return `🤔 Ya tenés anotado un gasto de *${datos.monto} ${datos.divisa}* en *${datos.servicio}* con fecha *${existente.fecha_gasto}*.\n¿Es un gasto nuevo? Respondé *sí* y lo anoto, o *no* si es el mismo de antes.`;
+function duplicateQuestion(data, existing) {
+    return `🤔 Ya tenés anotado un gasto de *${data.monto} ${data.divisa}* en *${data.servicio}* con fecha *${existing.fecha_gasto}*.\n¿Es un gasto nuevo? Respondé *sí* y lo anoto, o *no* si es el mismo de antes.`;
 }
 
-function avisoRecurrente(existente) {
-    return `\n\nℹ️ Ojo: ya tenías un gasto igual del *${existente.fecha_gasto}*. Como este es de otra fecha lo anoté igual; si era repetido, avisame.`;
+function recurringNotice(existing) {
+    return `\n\nℹ️ Ojo: ya tenías un gasto igual del *${existing.fecha_gasto}*. Como este es de otra fecha lo anoté igual; si era repetido, avisame.`;
 }
 
-// El punto único de entrada para un mensaje de texto entrante ya autenticado
-// (firma de Meta verificada en index.js). Es una máquina de estados chica:
+// The single entry point for an already-authenticated incoming text message
+// (Meta's signature verified in index.js). It's a small state machine:
 //
-//   1. ¿Ya procesamos este message_id? (idempotencia ante reintentos del webhook)
-//   2. ¿El usuario tiene una confirmación pendiente? → este mensaje es su respuesta
-//   3. Si no, flujo normal: extraer gasto → detectar duplicado exacto →
-//        - misma fecha  → PREGUNTAR (guardar pendiente, no insertar aún)
-//        - otra fecha   → INSERTAR + avisar (probable recurrente)
-//        - sin match    → INSERTAR normal
+//   1. Have we already processed this message_id? (idempotency against webhook retries)
+//   2. Does the user have a pending confirmation? → this message is their answer
+//   3. Otherwise, normal flow: extract expense → detect exact duplicate →
+//        - same date    → ASK (save pending, don't insert yet)
+//        - other date    → INSERT + notify (probably recurring)
+//        - no match      → INSERT normally
 //
-// Las dependencias de datos/IA se inyectan (deps) con default a las reales, así
-// los tests fakean cada costura sin simular Supabase ni la red.
-export async function manejarMensajeEntrante(args) {
+// Data/AI dependencies are injected (deps) defaulting to the real ones, so
+// tests can fake each seam without simulating Supabase or the network.
+export async function handleIncomingMessage(args) {
     const {
         supabase,
         ai,
         whatsapp,
-        numeroUsuario,
+        userPhone,
         messageId,
-        textoUsuario,
-        modelo,
-        ventanaConfirmacionMin,
+        userText,
+        model,
+        confirmationWindowMinutes,
         deps = {},
     } = args;
 
     const {
-        yaFueProcesado = yaFueProcesadoReal,
-        extraerGasto = extraerGastoReal,
-        buscarDuplicadoExacto = buscarDuplicadoExactoReal,
-        guardarPago = guardarPagoReal,
-        obtenerPendiente = obtenerPendienteReal,
-        guardarPendiente = guardarPendienteReal,
-        borrarPendiente = borrarPendienteReal,
+        wasAlreadyProcessed = wasAlreadyProcessedReal,
+        extractExpense = extractExpenseReal,
+        findExactDuplicate = findExactDuplicateReal,
+        savePayment = savePaymentReal,
+        getPending = getPendingReal,
+        savePending = savePendingReal,
+        deletePending = deletePendingReal,
     } = deps;
 
-    // 1. Idempotencia: reintento del webhook sobre un mensaje ya procesado.
-    if (await yaFueProcesado(supabase, messageId)) {
-        console.log(`Mensaje ${messageId} ya procesado, ignorando reintento de WhatsApp.`);
+    // 1. Idempotency: a webhook retry for a message we already processed.
+    if (await wasAlreadyProcessed(supabase, messageId)) {
+        console.log(`Message ${messageId} already processed, ignoring WhatsApp retry.`);
         return;
     }
 
-    // 2. ¿Este mensaje es la respuesta a una pregunta de confirmación pendiente?
-    const pendiente = await obtenerPendiente(supabase, numeroUsuario, ventanaConfirmacionMin);
-    if (pendiente) {
-        await manejarRespuestaConfirmacion({
+    // 2. Is this message the answer to a pending confirmation question?
+    const pending = await getPending(supabase, userPhone, confirmationWindowMinutes);
+    if (pending) {
+        await handleConfirmationResponse({
             whatsapp,
             supabase,
-            numeroUsuario,
-            textoUsuario,
-            pendiente,
-            guardarPago,
-            borrarPendiente,
+            userPhone,
+            userText,
+            pending,
+            savePayment,
+            deletePending,
         });
         return;
     }
 
-    // 3. Flujo normal: extraer el gasto del texto.
-    let extraccion;
+    // 3. Normal flow: extract the expense from the text.
+    let extraction;
     try {
-        extraccion = await extraerGasto(ai, textoUsuario, modelo);
+        extraction = await extractExpense(ai, userText, model);
     } catch (error) {
-        console.error('❌ Error consultando al LLM:', error);
-        await whatsapp.enviarMensaje(numeroUsuario, MENSAJE_ERROR_LLM);
+        console.error('❌ Error querying the LLM:', error);
+        await whatsapp.sendMessage(userPhone, LLM_ERROR_MESSAGE);
         return;
     }
 
-    if (!extraccion.esGasto) {
-        await whatsapp.enviarMensaje(numeroUsuario, MENSAJE_BIENVENIDA);
+    if (!extraction.isExpense) {
+        await whatsapp.sendMessage(userPhone, WELCOME_MESSAGE);
         return;
     }
 
-    const datos = extraccion.datos;
-    console.log('🧠 IA extrajo:', datos);
+    const data = extraction.data;
+    console.log('🧠 AI extracted:', data);
 
-    // 3a. ¿Existe un gasto que coincide exactamente (tel + servicio + monto + divisa)?
-    let existente = null;
+    // 3a. Is there an expense that matches exactly (phone + item + amount + currency)?
+    let existing = null;
     try {
-        existente = await buscarDuplicadoExacto(supabase, {
-            telefono: numeroUsuario,
-            servicio: datos.servicio,
-            monto: datos.monto,
-            divisa: datos.divisa,
+        existing = await findExactDuplicate(supabase, {
+            phone: userPhone,
+            servicio: data.servicio,
+            monto: data.monto,
+            divisa: data.divisa,
         });
     } catch (error) {
-        console.error('❌ Error buscando duplicado (se continúa e inserta):', error);
+        console.error('❌ Error looking up duplicate (continuing and inserting):', error);
     }
 
-    // 3b. Misma fecha → sospechoso de duplicado técnico → preguntar, NO insertar.
-    if (existente && existente.fecha_gasto === datos.fecha_gasto) {
+    // 3b. Same date → suspected technical duplicate → ask, DON'T insert.
+    if (existing && existing.fecha_gasto === data.fecha_gasto) {
         try {
-            await guardarPendiente(supabase, {
-                telefono: numeroUsuario,
-                payload: { messageId, datos },
-                motivo: 'duplicado_misma_fecha',
+            await savePending(supabase, {
+                phone: userPhone,
+                payload: { messageId, data },
+                reason: 'duplicate_same_date',
             });
         } catch (error) {
-            console.error('❌ Error guardando confirmación pendiente:', error);
-            await whatsapp.enviarMensaje(numeroUsuario, MENSAJE_ERROR_GUARDADO);
+            console.error('❌ Error saving pending confirmation:', error);
+            await whatsapp.sendMessage(userPhone, SAVE_ERROR_MESSAGE);
             return;
         }
-        await whatsapp.enviarMensaje(numeroUsuario, preguntaDuplicado(datos, existente));
+        await whatsapp.sendMessage(userPhone, duplicateQuestion(data, existing));
         return;
     }
 
-    // 3c. Sin match, u otra fecha (probable recurrente) → insertar.
+    // 3c. No match, or a different date (likely recurring) → insert.
     try {
-        const { duplicado } = await guardarPago(supabase, {
-            telefono: numeroUsuario,
+        const { duplicate } = await savePayment(supabase, {
+            phone: userPhone,
             messageId,
-            datos,
+            data,
         });
-        if (duplicado) {
-            console.log(`Insert duplicado detectado para ${messageId}; ya estaba guardado.`);
+        if (duplicate) {
+            console.log(`Duplicate insert detected for ${messageId}; already saved.`);
             return;
         }
     } catch (error) {
-        console.error('❌ Error guardando en Supabase:', error);
-        await whatsapp.enviarMensaje(numeroUsuario, MENSAJE_ERROR_GUARDADO);
+        console.error('❌ Error saving to Supabase:', error);
+        await whatsapp.sendMessage(userPhone, SAVE_ERROR_MESSAGE);
         return;
     }
 
-    let mensaje = formatearConfirmacion(datos);
-    if (existente) mensaje += avisoRecurrente(existente);
-    await whatsapp.enviarMensaje(numeroUsuario, mensaje);
+    let message = formatConfirmation(data);
+    if (existing) message += recurringNotice(existing);
+    await whatsapp.sendMessage(userPhone, message);
 }
 
-// Interpreta la respuesta del usuario a una pregunta de duplicado y actúa.
-async function manejarRespuestaConfirmacion({
+// Interprets the user's response to a duplicate question and acts on it.
+async function handleConfirmationResponse({
     whatsapp,
     supabase,
-    numeroUsuario,
-    textoUsuario,
-    pendiente,
-    guardarPago,
-    borrarPendiente,
+    userPhone,
+    userText,
+    pending,
+    savePayment,
+    deletePending,
 }) {
-    const decision = interpretarRespuesta(textoUsuario);
+    const decision = parseResponse(userText);
 
-    if (decision === 'ambiguo') {
-        // No entendimos: dejamos la pendiente intacta y volvemos a preguntar.
-        await whatsapp.enviarMensaje(numeroUsuario, MENSAJE_NO_ENTENDI);
+    if (decision === 'ambiguous') {
+        // We didn't understand: leave the pending confirmation intact and ask again.
+        await whatsapp.sendMessage(userPhone, DIDNT_UNDERSTAND_MESSAGE);
         return;
     }
 
     if (decision === 'no') {
-        await borrarPendiente(supabase, numeroUsuario);
-        await whatsapp.enviarMensaje(numeroUsuario, MENSAJE_DESCARTADO);
+        await deletePending(supabase, userPhone);
+        await whatsapp.sendMessage(userPhone, DISCARDED_MESSAGE);
         return;
     }
 
-    // decision === 'si' → insertar el gasto que había quedado en espera.
-    const { messageId, datos } = pendiente.payload;
+    // decision === 'yes' → insert the expense that was left waiting.
+    const { messageId, data } = pending.payload;
     try {
-        await guardarPago(supabase, { telefono: numeroUsuario, messageId, datos });
+        await savePayment(supabase, { phone: userPhone, messageId, data });
     } catch (error) {
-        console.error('❌ Error guardando el pago confirmado:', error);
-        // No borramos la pendiente: el usuario puede reintentar respondiendo de nuevo.
-        await whatsapp.enviarMensaje(numeroUsuario, MENSAJE_ERROR_GUARDADO);
+        console.error('❌ Error saving the confirmed payment:', error);
+        // We don't delete the pending confirmation: the user can retry by answering again.
+        await whatsapp.sendMessage(userPhone, SAVE_ERROR_MESSAGE);
         return;
     }
-    await borrarPendiente(supabase, numeroUsuario);
-    await whatsapp.enviarMensaje(numeroUsuario, formatearConfirmacion(datos));
+    await deletePending(supabase, userPhone);
+    await whatsapp.sendMessage(userPhone, formatConfirmation(data));
 }

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gastoSchema } from '../src/aiExtractor.js';
+import { expenseSchema } from '../src/aiExtractor.js';
 
-test('acepta un gasto válido y normaliza mayúsculas/minúsculas', () => {
-    const resultado = gastoSchema.safeParse({
+test('accepts a valid expense and normalizes upper/lower case', () => {
+    const result = expenseSchema.safeParse({
         servicio: 'Antel',
         monto: 2000,
         divisa: 'uyu',
@@ -11,14 +11,14 @@ test('acepta un gasto válido y normaliza mayúsculas/minúsculas', () => {
         categoria: 'Servicios',
         fecha_gasto: '2026-07-30',
     });
-    assert.equal(resultado.success, true);
-    assert.equal(resultado.data.divisa, 'UYU');
-    assert.equal(resultado.data.metodo_pago, 'efectivo');
-    assert.equal(resultado.data.cuotas, 1); // default cuando no viene
+    assert.equal(result.success, true);
+    assert.equal(result.data.divisa, 'UYU');
+    assert.equal(result.data.metodo_pago, 'efectivo');
+    assert.equal(result.data.cuotas, 1); // default when not provided
 });
 
-test('acepta monto como string numérico (coerción)', () => {
-    const resultado = gastoSchema.safeParse({
+test('accepts amount as a numeric string (coercion)', () => {
+    const result = expenseSchema.safeParse({
         servicio: 'Antel',
         monto: '2000',
         divisa: 'UYU',
@@ -26,12 +26,12 @@ test('acepta monto como string numérico (coerción)', () => {
         categoria: 'Servicios',
         fecha_gasto: '2026-07-30',
     });
-    assert.equal(resultado.success, true);
-    assert.equal(resultado.data.monto, 2000);
+    assert.equal(result.success, true);
+    assert.equal(result.data.monto, 2000);
 });
 
-test('rechaza monto negativo o cero', () => {
-    const resultado = gastoSchema.safeParse({
+test('rejects a negative or zero amount', () => {
+    const result = expenseSchema.safeParse({
         servicio: 'Antel',
         monto: 0,
         divisa: 'UYU',
@@ -39,11 +39,11 @@ test('rechaza monto negativo o cero', () => {
         categoria: 'Servicios',
         fecha_gasto: '2026-07-30',
     });
-    assert.equal(resultado.success, false);
+    assert.equal(result.success, false);
 });
 
-test('rechaza una divisa fuera del enum', () => {
-    const resultado = gastoSchema.safeParse({
+test('rejects a currency outside the enum', () => {
+    const result = expenseSchema.safeParse({
         servicio: 'Antel',
         monto: 100,
         divisa: 'ARS',
@@ -51,11 +51,11 @@ test('rechaza una divisa fuera del enum', () => {
         categoria: 'Servicios',
         fecha_gasto: '2026-07-30',
     });
-    assert.equal(resultado.success, false);
+    assert.equal(result.success, false);
 });
 
-test('rechaza una fecha con formato inválido', () => {
-    const resultado = gastoSchema.safeParse({
+test('rejects a date with invalid format', () => {
+    const result = expenseSchema.safeParse({
         servicio: 'Antel',
         monto: 100,
         divisa: 'UYU',
@@ -63,10 +63,10 @@ test('rechaza una fecha con formato inválido', () => {
         categoria: 'Servicios',
         fecha_gasto: '30/07/2026',
     });
-    assert.equal(resultado.success, false);
+    assert.equal(result.success, false);
 });
 
-test('rechaza un objeto vacío (mensaje sin gasto, ej. un saludo)', () => {
-    const resultado = gastoSchema.safeParse({});
-    assert.equal(resultado.success, false);
+test('rejects an empty object (message with no expense, e.g. a greeting)', () => {
+    const result = expenseSchema.safeParse({});
+    assert.equal(result.success, false);
 });
