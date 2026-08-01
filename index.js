@@ -76,6 +76,7 @@ app.post('/webhook', async (req, res) => {
             messageId,
             textoUsuario,
             modelo: config.llmModel,
+            ventanaConfirmacionMin: config.ventanaConfirmacionMin,
         });
         res.sendStatus(200);
     } catch (error) {

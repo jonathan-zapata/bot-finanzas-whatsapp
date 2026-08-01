@@ -33,4 +33,8 @@ export const config = {
     supabaseKey: process.env.SUPABASE_KEY,
     whatsappToken: process.env.WHATSAPP_TOKEN,
     phoneNumberId: process.env.PHONE_NUMBER_ID,
+    // Ventana (en minutos) que una confirmación de duplicado queda pendiente
+    // antes de expirar. Si el usuario no responde en este tiempo, la pregunta
+    // caduca y su próximo mensaje se trata como uno nuevo.
+    ventanaConfirmacionMin: Number(process.env.VENTANA_CONFIRMACION_MIN) || 30,
 };

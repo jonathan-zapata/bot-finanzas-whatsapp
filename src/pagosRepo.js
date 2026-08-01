@@ -45,3 +45,26 @@ export async function guardarPago(supabase, { telefono, messageId, datos }) {
     }
     return { duplicado: false };
 }
+
+// Busca un pago ya registrado que coincida EXACTAMENTE en telefono + servicio +
+// monto + divisa (la definición de "duplicado" que elegimos: match exacto de
+// campos). Devuelve el pago más reciente que coincide, o null. El caller compara
+// la fecha_gasto para decidir si es un duplicado técnico (misma fecha → preguntar)
+// o un gasto recurrente legítimo (otra fecha → anotar y avisar).
+export async function buscarDuplicadoExacto(supabase, { telefono, servicio, monto, divisa }) {
+    const { data, error } = await supabase
+        .from(TABLA)
+        .select('id, servicio, monto, divisa, fecha_gasto')
+        .eq('telefono', telefono)
+        .eq('servicio', servicio)
+        .eq('monto', monto)
+        .eq('divisa', divisa)
+        .order('id', { ascending: false })
+        .limit(1);
+
+    if (error) {
+        console.error('❌ Error buscando duplicado exacto (se continúa sin bloquear):', error);
+        return null;
+    }
+    return data && data.length > 0 ? data[0] : null;
+}
