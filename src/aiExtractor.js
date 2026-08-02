@@ -97,7 +97,7 @@ Responde ÚNICAMENTE con el objeto JSON.`;
 // unvalidated data: if the message doesn't describe an expense, or the LLM
 // gets the format wrong, isExpense comes back false and the caller decides
 // how to respond.
-export async function extractExpense(ai, userText, model = 'llama-3.1-8b-instant') {
+export async function extractExpense(ai, userText, model = 'llama-3.3-70b-versatile') {
     const prompt = buildPrompt(userText);
     const completion = await ai.chat.completions.create({
         messages: [{ role: 'user', content: prompt }],

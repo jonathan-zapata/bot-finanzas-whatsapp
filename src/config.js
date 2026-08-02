@@ -29,7 +29,7 @@ export const config = {
     // No default forced to Groq: this lets you point to a local Ollama (e.g.
     // "qwen2.5:7b") without touching code, just by changing LLM_MODEL and
     // LLM_BASE_URL in .env.
-    llmModel: process.env.LLM_MODEL || 'llama-3.1-8b-instant',
+    llmModel: process.env.LLM_MODEL || 'llama-3.3-70b-versatile',
     supabaseUrl: process.env.SUPABASE_URL,
     supabaseKey: process.env.SUPABASE_KEY,
     whatsappToken: process.env.WHATSAPP_TOKEN,
