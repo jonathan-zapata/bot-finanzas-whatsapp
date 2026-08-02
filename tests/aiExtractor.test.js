@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { expenseSchema, buildPrompt } from '../src/aiExtractor.js';
+import { expenseSchema, buildPrompt, extractExpense } from '../src/aiExtractor.js';
 
 test('accepts a valid expense and normalizes upper/lower case', () => {
     const result = expenseSchema.safeParse({
@@ -124,4 +124,25 @@ test('buildPrompt matches UTC when Uruguay and UTC agree on the date', () => {
 
     assert.match(prompt, /Hoy es Sábado 2026-08-01/);
     assert.match(prompt, /fecha_gasto DEBE ser exactamente "2026-08-01"/);
+});
+
+// This is a structured-extraction task, not creative writing: several bugs we
+// chased (wrong date, comma decimals, invented payment methods) turned out to
+// be sampling-temperature noise — the model deviating from an explicit
+// instruction on some calls but not others. temperature: 0 forces greedy
+// decoding (always the single most likely token) instead of sampling.
+test('extractExpense requests temperature: 0 from the LLM', async () => {
+    let receivedArgs;
+    const fakeAi = {
+        chat: {
+            completions: {
+                async create(args) {
+                    receivedArgs = args;
+                    return { choices: [{ message: { content: '{}' } }] };
+                },
+            },
+        },
+    };
+    await extractExpense(fakeAi, 'Hola');
+    assert.equal(receivedArgs.temperature, 0);
 });

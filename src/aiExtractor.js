@@ -103,6 +103,14 @@ export async function extractExpense(ai, userText, model = 'llama-3.1-8b-instant
         messages: [{ role: 'user', content: prompt }],
         model,
         response_format: { type: 'json_object' },
+        // Structured extraction, not creative writing: we want the model to
+        // always pick its single most likely token, not sample from the
+        // distribution. Several of the bugs we've chased (wrong date, comma
+        // decimals, invented payment methods) were the model deviating from
+        // an explicit instruction on some calls but not others — classic
+        // sampling-temperature noise, not a fixed logic bug we could patch
+        // away with a schema tweak.
+        temperature: 0,
     });
 
     const raw = JSON.parse(completion.choices[0].message.content);
