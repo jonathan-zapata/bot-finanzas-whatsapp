@@ -108,6 +108,15 @@ export async function extractExpense(ai, userText, model = 'llama-3.1-8b-instant
     const raw = JSON.parse(completion.choices[0].message.content);
     const parseResult = expenseSchema.safeParse(raw);
     if (!parseResult.success) {
+        // {} means the LLM correctly decided this isn't an expense (per the
+        // prompt) — expected, not worth logging. Anything else means the LLM
+        // DID try to extract an expense but got a field wrong; log both the
+        // raw output and the validation errors so we can diagnose which field
+        // and why, instead of guessing blind next time this happens.
+        if (Object.keys(raw).length > 0) {
+            console.warn('⚠️ LLM returned an expense that failed validation:', JSON.stringify(raw));
+            console.warn('   Validation errors:', JSON.stringify(parseResult.error.issues));
+        }
         return { isExpense: false, errors: parseResult.error.issues };
     }
     return { isExpense: true, data: parseResult.data };
