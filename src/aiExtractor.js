@@ -24,8 +24,7 @@ export const expenseSchema = z.object({
     fecha_gasto: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'invalid date format'),
 });
 
-function buildDateContext() {
-    const today = new Date();
+function buildDateContext(today) {
     const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     let context = `Hoy es ${dayNames[today.getDay()]} ${today.toISOString().split('T')[0]}.\nCalendario de referencia de los últimos 7 días:\n`;
     for (let i = 1; i <= 7; i++) {
@@ -39,7 +38,9 @@ function buildDateContext() {
 // The prompt itself stays in Spanish: it's sent straight to the LLM to parse
 // messages from Spanish-speaking users, so translating it would change the
 // bot's actual behavior, not just its code.
-export function buildPrompt(userText, { dateContext = buildDateContext() } = {}) {
+export function buildPrompt(userText, { today = new Date() } = {}) {
+    const todayIso = today.toISOString().split('T')[0];
+    const dateContext = buildDateContext(today);
     return `Actúa como un asistente financiero en Uruguay.
 ${dateContext}
 Analiza el siguiente mensaje: "${userText}".
@@ -51,7 +52,7 @@ Extrae los datos en este formato JSON exacto:
 - metodo_pago: SOLO "credito", "debito", o "efectivo".
 - cuotas: número entero. Si no especifica, es 1.
 - categoria: SOLO una de estas: [${CATEGORIES.join(', ')}].
-- fecha_gasto: Formato YYYY-MM-DD. Usa el calendario de referencia provisto arriba para hacer coincidir días relativos (como "ayer", "el lunes", "el martes pasado") con su fecha exacta. Si no especifica fecha, usa la de Hoy.
+- fecha_gasto: Formato YYYY-MM-DD. Regla estricta: si el mensaje menciona explícitamente un día relativo ("ayer", "el lunes", "el martes pasado", etc.), usá el calendario de arriba para calcular esa fecha exacta. Si el mensaje NO menciona ningún día, fecha_gasto DEBE ser exactamente "${todayIso}" — no elijas ninguna otra fecha del calendario en ese caso.
 - Si el mensaje NO describe un gasto (ej: un saludo o una pregunta), respondé con {}.
 
 Responde ÚNICAMENTE con el objeto JSON.`;
