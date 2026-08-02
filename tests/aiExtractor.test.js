@@ -30,6 +30,36 @@ test('accepts amount as a numeric string (coercion)', () => {
     assert.equal(result.data.monto, 2000);
 });
 
+// Regression test for the production bug: Uruguayan users write amounts with
+// a comma as the decimal separator (e.g. "2813,31"), which the LLM sometimes
+// echoes verbatim. Number("2813,31") is NaN, so this used to fail validation
+// silently and fall back to the welcome message instead of saving the expense.
+test('accepts amount with a comma decimal separator (Uruguayan format)', () => {
+    const result = expenseSchema.safeParse({
+        servicio: 'Tarjeta BBVA',
+        monto: '2813,31',
+        divisa: 'UYU',
+        metodo_pago: 'credito',
+        categoria: 'Otros',
+        fecha_gasto: '2026-08-02',
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.data.monto, 2813.31);
+});
+
+test('accepts amount with dot as thousands separator and comma as decimal', () => {
+    const result = expenseSchema.safeParse({
+        servicio: 'Alquiler',
+        monto: '1.500,50',
+        divisa: 'UYU',
+        metodo_pago: 'efectivo',
+        categoria: 'Vivienda',
+        fecha_gasto: '2026-08-02',
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.data.monto, 1500.5);
+});
+
 test('rejects a negative or zero amount', () => {
     const result = expenseSchema.safeParse({
         servicio: 'Antel',

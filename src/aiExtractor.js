@@ -6,6 +6,22 @@ const CATEGORIES = ['Vivienda', 'Alimentación', 'Transporte', 'Servicios', 'Sal
 
 const normalize = (transform) => (v) => (typeof v === 'string' ? transform(v.trim()) : v);
 
+// Uruguayan users write amounts with a comma as the decimal separator (and
+// sometimes a dot as the thousands separator, e.g. "2.813,31") — JS's Number()
+// only understands a dot as decimal, so "2813,31" parses as NaN. The LLM
+// doesn't reliably normalize this on its own (seen in production: it echoed
+// the user's comma verbatim), so we normalize in code instead of trusting the
+// model to always get it right.
+function parseAmount(value) {
+    if (typeof value !== 'string') return value; // let zod's own type check handle non-strings
+    let s = value.trim();
+    if (s.includes(',')) {
+        s = s.replace(/\./g, '').replace(',', '.'); // "2.813,31" -> "2813.31"
+    }
+    const n = Number(s);
+    return Number.isNaN(n) ? value : n; // if still unparsable, let zod reject the original value
+}
+
 // What we trust the LLM to return before touching the database. An LLM can
 // hallucinate types or values outside the expected enums; this rejects those
 // cases instead of inserting them as-is.
@@ -16,7 +32,7 @@ const normalize = (transform) => (v) => (typeof v === 'string' ? transform(v.tri
 // code-style rename.
 export const expenseSchema = z.object({
     servicio: z.string().trim().min(1),
-    monto: z.coerce.number().positive(),
+    monto: z.preprocess(parseAmount, z.coerce.number().positive()),
     divisa: z.preprocess(normalize((s) => s.toUpperCase()), z.enum(CURRENCIES)),
     metodo_pago: z.preprocess(normalize((s) => s.toLowerCase()), z.enum(PAYMENT_METHODS)),
     cuotas: z.coerce.number().int().positive().default(1),
@@ -66,7 +82,7 @@ Analiza el siguiente mensaje: "${userText}".
 
 Extrae los datos en este formato JSON exacto:
 - servicio: nombre del gasto.
-- monto: número.
+- monto: número usando punto como separador decimal (ej: 2813.31), nunca coma, aunque el usuario lo haya escrito con coma.
 - divisa: SOLO "USD" o "UYU".
 - metodo_pago: SOLO "credito", "debito", o "efectivo".
 - cuotas: número entero. Si no especifica, es 1.
