@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { expenseSchema } from '../src/aiExtractor.js';
+import { expenseSchema, buildPrompt } from '../src/aiExtractor.js';
 
 test('accepts a valid expense and normalizes upper/lower case', () => {
     const result = expenseSchema.safeParse({
@@ -69,4 +69,29 @@ test('rejects a date with invalid format', () => {
 test('rejects an empty object (message with no expense, e.g. a greeting)', () => {
     const result = expenseSchema.safeParse({});
     assert.equal(result.success, false);
+});
+
+// Regression test for the production bug: a message sent in the evening in
+// Uruguay (UTC-3) can land at a UTC timestamp that has already rolled over to
+// the next calendar day. "today" for the prompt must follow Uruguay's
+// calendar, not the container's (UTC).
+test('buildPrompt uses Uruguay\'s calendar date, not UTC, in the evening rollover window', () => {
+    // 2026-08-02T01:50:00Z = 2026-08-01 22:50 in Montevideo (UTC-3):
+    // still "today" in Uruguay, already "tomorrow" per raw UTC.
+    const rolledOverInUtc = new Date('2026-08-02T01:50:00Z');
+    const prompt = buildPrompt('Pagué 500 de supermercado', { today: rolledOverInUtc });
+
+    assert.match(prompt, /Hoy es Sábado 2026-08-01/);
+    assert.match(prompt, /fecha_gasto DEBE ser exactamente "2026-08-01"/);
+    assert.doesNotMatch(prompt, /2026-08-02/);
+});
+
+test('buildPrompt matches UTC when Uruguay and UTC agree on the date', () => {
+    // 2026-08-01T15:00:00Z = 2026-08-01 12:00 in Montevideo: same calendar day
+    // in both, so this should behave the same regardless of timezone handling.
+    const midday = new Date('2026-08-01T15:00:00Z');
+    const prompt = buildPrompt('Pagué 500 de supermercado', { today: midday });
+
+    assert.match(prompt, /Hoy es Sábado 2026-08-01/);
+    assert.match(prompt, /fecha_gasto DEBE ser exactamente "2026-08-01"/);
 });

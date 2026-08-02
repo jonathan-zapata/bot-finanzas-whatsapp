@@ -24,23 +24,42 @@ export const expenseSchema = z.object({
     fecha_gasto: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'invalid date format'),
 });
 
-function buildDateContext(today) {
-    const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-    let context = `Hoy es ${dayNames[today.getDay()]} ${today.toISOString().split('T')[0]}.\nCalendario de referencia de los últimos 7 días:\n`;
+// This bot only serves Uruguay ("Actúa como un asistente financiero en
+// Uruguay" below), so dates are computed in Uruguay's calendar, not the
+// container's. Cloud Run containers run in UTC — using the container's local
+// time here would put "today" a day ahead of Uruguay for the ~3 evening hours
+// (21:00-23:59 local) after UTC has already crossed midnight but Uruguay
+// hasn't. Intl.DateTimeFormat handles this correctly (Uruguay has been fixed
+// at UTC-3 with no DST since 2015).
+const TIMEZONE = 'America/Montevideo';
+const DAY_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+
+function isoDateInTimezone(date, timeZone = TIMEZONE) {
+    // en-CA formats as YYYY-MM-DD directly, already in the target timezone.
+    return new Intl.DateTimeFormat('en-CA', { timeZone }).format(date);
+}
+
+function dayNameForIsoDate(isoDate) {
+    // Parsed as UTC midnight: safe for a weekday lookup since the weekday of a
+    // calendar date doesn't depend on time-of-day.
+    return DAY_NAMES[new Date(`${isoDate}T00:00:00Z`).getUTCDay()];
+}
+
+function buildDateContext(now) {
+    const todayIso = isoDateInTimezone(now);
+    let context = `Hoy es ${dayNameForIsoDate(todayIso)} ${todayIso}.\nCalendario de referencia de los últimos 7 días:\n`;
     for (let i = 1; i <= 7; i++) {
-        const date = new Date(today);
-        date.setDate(today.getDate() - i);
-        context += `- ${dayNames[date.getDay()]}: ${date.toISOString().split('T')[0]}\n`;
+        const pastIso = isoDateInTimezone(new Date(now.getTime() - i * 86_400_000));
+        context += `- ${dayNameForIsoDate(pastIso)}: ${pastIso}\n`;
     }
-    return context;
+    return { context, todayIso };
 }
 
 // The prompt itself stays in Spanish: it's sent straight to the LLM to parse
 // messages from Spanish-speaking users, so translating it would change the
 // bot's actual behavior, not just its code.
 export function buildPrompt(userText, { today = new Date() } = {}) {
-    const todayIso = today.toISOString().split('T')[0];
-    const dateContext = buildDateContext(today);
+    const { context: dateContext, todayIso } = buildDateContext(today);
     return `Actúa como un asistente financiero en Uruguay.
 ${dateContext}
 Analiza el siguiente mensaje: "${userText}".
