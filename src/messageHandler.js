@@ -61,6 +61,10 @@ export async function handleIncomingMessage(args) {
         userText,
         model,
         confirmationWindowMinutes,
+        // Constructed real services for the email agent (auth today; Graph /
+        // cache / taxonomy in later tickets). Injected here so agents stay
+        // deps-injected and tests fake them with no network.
+        emailServices,
         deps = {},
     } = args;
 
@@ -91,6 +95,7 @@ export async function handleIncomingMessage(args) {
             pending,
             model,
             confirmationWindowMinutes,
+            emailServices,
             deps,
         });
         return;
@@ -108,6 +113,7 @@ export async function handleIncomingMessage(args) {
         remainder,
         model,
         confirmationWindowMinutes,
+        emailServices,
         deps,
     });
 }

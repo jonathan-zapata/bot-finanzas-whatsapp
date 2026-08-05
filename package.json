@@ -10,6 +10,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@google-cloud/secret-manager": "^5.6.0",
     "@supabase/supabase-js": "^2.103.0",
     "dotenv": "^17.4.1",
     "express": "^5.2.1",

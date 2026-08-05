@@ -4,6 +4,8 @@ import OpenAI from 'openai';
 import { config } from './src/config.js';
 import { createWhatsAppClient, verifyWebhookSignature } from './src/whatsappClient.js';
 import { handleIncomingMessage } from './src/messageHandler.js';
+import { createSecretManager } from './src/secretManager.js';
+import { createEmailAuthService } from './src/microsoftAuth.js';
 
 const app = express();
 // We keep the raw body (rawBody) because Meta's signature verification is
@@ -20,6 +22,13 @@ const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 const ai = new OpenAI({ apiKey: config.llmApiKey, baseURL: config.llmBaseUrl });
 const whatsapp = createWhatsAppClient({ token: config.whatsappToken, phoneNumberId: config.phoneNumberId });
 
+// Email-agent services. The refresh token lives in Secret Manager (runtime
+// read/write because it rotates); the auth service is built even when Microsoft
+// isn't configured yet — it only reaches for Secret Manager when an email
+// request actually needs the mailbox.
+const secretManager = createSecretManager({ projectId: config.gcpProjectId });
+const emailServices = createEmailAuthService({ config: config.microsoft, secretManager });
+
 // ==========================================
 // ROUTE 1: META VERIFICATION
 // ==========================================
@@ -32,6 +41,33 @@ app.get('/webhook', (req, res) => {
         res.status(200).send(challenge);
     } else {
         res.sendStatus(403);
+    }
+});
+
+// ==========================================
+// ROUTE 3: MICROSOFT OAUTH CALLBACK
+// ==========================================
+// Mirrors the Meta webhook-verification route: a simple GET the identity
+// provider redirects to. Microsoft sends back an authorization `code`; we
+// exchange it for tokens and store the refresh token in Secret Manager. Nothing
+// here can write to the mailbox — only read scopes were consented.
+app.get('/oauth/microsoft/callback', async (req, res) => {
+    const { code, error, error_description: errorDescription } = req.query;
+    if (error) {
+        console.warn('⚠️ Microsoft OAuth returned an error:', error, errorDescription);
+        res.status(400).send(`No se pudo conectar: ${error_description || error}`);
+        return;
+    }
+    if (!code) {
+        res.status(400).send('Falta el parámetro "code".');
+        return;
+    }
+    try {
+        await emailServices.handleCallback(code);
+        res.status(200).send('✅ ¡Casilla conectada! Ya podés volver a WhatsApp y pedirme lo que quieras.');
+    } catch (err) {
+        console.error('❌ Error handling Microsoft OAuth callback:', err);
+        res.status(500).send('Hubo un error conectando tu casilla. Probá de nuevo.');
     }
 });
 
@@ -77,6 +113,7 @@ app.post('/webhook', async (req, res) => {
             userText,
             model: config.llmModel,
             confirmationWindowMinutes: config.confirmationWindowMinutes,
+            emailServices,
         });
         res.sendStatus(200);
     } catch (error) {

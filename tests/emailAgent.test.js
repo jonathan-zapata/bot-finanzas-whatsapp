@@ -1,6 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { emailAgent } from '../src/emailAgent.js';
+import { NotConnectedError } from '../src/microsoftAuth.js';
+
+// A fake email-services bundle. `connected: true` yields an access token;
+// `connected: false` makes getAccessToken throw NotConnectedError, exercising
+// the reconnect path.
+function fakeEmailServices({ connected = true } = {}) {
+    return {
+        buildConsentUrl: () => 'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=abc',
+        getAccessToken: async () => {
+            if (!connected) throw new NotConnectedError();
+            return 'access-token-123';
+        },
+    };
+}
 
 // Drives the email agent's entry points directly with faked seams (classifier,
 // pending store, WhatsApp), asserting on the outbound reply and persisted
@@ -40,17 +54,17 @@ function makeDeps({ action = 'unclear', pending = new Map() } = {}) {
     };
 }
 
-function handle({ deps, remainder }) {
+function handle({ deps, remainder, emailServices = fakeEmailServices() }) {
     const whatsapp = createFakeWhatsapp();
     return emailAgent
-        .handleMessage({ ai: {}, supabase: {}, whatsapp, userPhone: PHONE, remainder, model: 'm', deps })
+        .handleMessage({ ai: {}, supabase: {}, whatsapp, userPhone: PHONE, remainder, model: 'm', emailServices, deps })
         .then(() => whatsapp);
 }
 
-function reply({ deps, pending, userText }) {
+function reply({ deps, pending, userText, emailServices = fakeEmailServices() }) {
     const whatsapp = createFakeWhatsapp();
     return emailAgent
-        .handlePendingReply({ supabase: {}, whatsapp, userPhone: PHONE, userText, pending, deps })
+        .handlePendingReply({ supabase: {}, whatsapp, userPhone: PHONE, userText, pending, emailServices, deps })
         .then(() => whatsapp);
 }
 
@@ -140,6 +154,37 @@ test('an unparseable menu reply re-asks and keeps the question pending', async (
 
     assert.match(whatsapp.last(), /número/);
     assert.ok(pending.has(PHONE), 'question stays pending until answered with a valid number');
+});
+
+test('connect action → replies with a Microsoft consent URL (no token required)', async () => {
+    const env = makeDeps({ action: 'connect' });
+    const whatsapp = await handle({ deps: env.deps, remainder: 'conectá mi cuenta' });
+
+    assert.match(whatsapp.last(), /login\.microsoftonline\.com/);
+    assert.match(whatsapp.last(), /authorize/);
+});
+
+test('a mailbox action with no connection → reconnect prompt, no "coming soon"', async () => {
+    const env = makeDeps({ action: 'xray' });
+    const whatsapp = await handle({
+        deps: env.deps,
+        remainder: 'a dónde va mi correo',
+        emailServices: fakeEmailServices({ connected: false }),
+    });
+
+    assert.match(whatsapp.last(), /conectaste tu casilla|conexión venció/);
+    assert.doesNotMatch(whatsapp.last(), /construcción/, 'must not proceed to the action when not connected');
+});
+
+test('a mailbox action WITH a connection → proceeds (coming soon for now)', async () => {
+    const env = makeDeps({ action: 'xray' });
+    const whatsapp = await handle({
+        deps: env.deps,
+        remainder: 'a dónde va mi correo',
+        emailServices: fakeEmailServices({ connected: true }),
+    });
+
+    assert.match(whatsapp.last(), /construcción/);
 });
 
 test('an out-of-range number re-asks (does not run a wrong action)', async () => {

@@ -38,4 +38,22 @@ export const config = {
     // expires. If the user doesn't reply within this time, the question lapses
     // and their next message is treated as a new one.
     confirmationWindowMinutes: Number(process.env.VENTANA_CONFIRMACION_MIN) || 30,
+
+    // ── Email agent (optional) ────────────────────────────────────────────
+    // Not in REQUIRED_ENV_VARS: the bot boots and the expense flow runs without
+    // any of these. They're only needed to connect a Microsoft mailbox. When
+    // unset, the email agent replies that the connection isn't configured
+    // instead of crashing.
+    microsoft: {
+        clientId: process.env.MS_CLIENT_ID,
+        clientSecret: process.env.MS_CLIENT_SECRET,
+        // Must exactly match the redirect URI registered on the Azure app and
+        // point at GET /oauth/microsoft/callback on this service.
+        redirectUri: process.env.MS_REDIRECT_URI,
+        // "consumers" for personal Hotmail/Outlook accounts.
+        tenant: process.env.MS_TENANT || 'consumers',
+        // Secret Manager secret id that holds the rotating refresh token.
+        refreshTokenSecret: process.env.MS_REFRESH_TOKEN_SECRET || 'ms-refresh-token',
+    },
+    gcpProjectId: process.env.GCP_PROJECT_ID,
 };

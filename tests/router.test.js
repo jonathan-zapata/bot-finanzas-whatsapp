@@ -68,6 +68,13 @@ function makeSpyDeps(state = {}, { emailAction = 'help', expenseExtraction = { i
     };
 }
 
+// Connected fake so email mailbox actions (e.g. resolving a menu choice to
+// xray) proceed instead of prompting to reconnect.
+const connectedEmailServices = {
+    buildConsentUrl: () => 'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize',
+    getAccessToken: async () => 'access-token',
+};
+
 function invoke({ deps, text, messageId = 'm1' }) {
     const whatsapp = createFakeWhatsapp();
     return handleIncomingMessage({
@@ -77,6 +84,7 @@ function invoke({ deps, text, messageId = 'm1' }) {
         userPhone: PHONE,
         messageId,
         userText: text,
+        emailServices: connectedEmailServices,
         deps,
     }).then(() => whatsapp);
 }

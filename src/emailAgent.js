@@ -1,4 +1,5 @@
 import { classifyEmailIntent as classifyEmailIntentReal } from './emailIntentClassifier.js';
+import { NotConnectedError } from './microsoftAuth.js';
 import {
     savePending as savePendingReal,
     deletePending as deletePendingReal,
@@ -48,6 +49,17 @@ const COMING_SOON_MESSAGE =
 const DISAMBIGUATION_UNRESOLVED_MESSAGE =
     '🤔 No entendí qué número elegiste. Respondé solo con el número de una de las opciones que te pasé.';
 
+const RECONNECT_MESSAGE =
+    '🔌 Todavía no conectaste tu casilla de Microsoft (o la conexión venció). Escribí *email conectar* y seguí el link para darme acceso de solo lectura.';
+
+const CONNECT_UNAVAILABLE_MESSAGE =
+    '⚠️ La conexión con Microsoft no está configurada en el servidor todavía. Avisá al administrador.';
+
+// Actions that read the mailbox and therefore require a live connection. They
+// gate on a valid access token first and reply with a reconnect prompt if there
+// isn't one. `connect` and `help` are intentionally not here.
+const MAILBOX_ACTIONS = new Set(['summary', 'xray', 'recommendations', 'setup_categories', 'refresh']);
+
 function buildHelpMessage() {
     const lines = ACTION_CATALOG.map((a) => `• ${a.menu}`).join('\n');
     return (
@@ -83,19 +95,68 @@ export function matchPrefix(userText) {
     return { matched: false, remainder: '' };
 }
 
-// Runs a resolved action. Ticket 03 implements `help` fully; every other action
-// classifies correctly but answers "coming soon" until its ticket lands
-// (04–08). Kept as one dispatch point so later tickets plug real handlers in
-// without touching the routing/disambiguation logic around it.
+// Runs a resolved action. `help` and `connect` are implemented; the mailbox
+// actions gate on a live connection (reconnect prompt if missing) and then
+// answer "coming soon" until their ticket lands (05–08), which will replace the
+// coming-soon branch with the real read-only logic.
 async function runEmailAction(action, ctx) {
     const { whatsapp, userPhone } = ctx;
-    switch (action) {
-        case 'help':
-            await whatsapp.sendMessage(userPhone, buildHelpMessage());
-            return;
-        default:
-            await whatsapp.sendMessage(userPhone, COMING_SOON_MESSAGE);
-            return;
+
+    if (action === 'help') {
+        await whatsapp.sendMessage(userPhone, buildHelpMessage());
+        return;
+    }
+
+    if (action === 'connect') {
+        await handleConnect(ctx);
+        return;
+    }
+
+    if (MAILBOX_ACTIONS.has(action)) {
+        const token = await ensureConnected(ctx);
+        if (token === null) return; // reconnect prompt already sent
+        // TODO(tickets 05–08): dispatch to the real read-only action here.
+        await whatsapp.sendMessage(userPhone, COMING_SOON_MESSAGE);
+        return;
+    }
+
+    // Defensive default (the classifier's enum shouldn't produce anything else).
+    await whatsapp.sendMessage(userPhone, COMING_SOON_MESSAGE);
+}
+
+// Replies with the Microsoft consent URL so the user can grant read-only access.
+async function handleConnect(ctx) {
+    const { whatsapp, userPhone, emailServices } = ctx;
+    if (!emailServices?.buildConsentUrl) {
+        await whatsapp.sendMessage(userPhone, CONNECT_UNAVAILABLE_MESSAGE);
+        return;
+    }
+    const url = emailServices.buildConsentUrl();
+    await whatsapp.sendMessage(
+        userPhone,
+        '🔗 Para conectar tu casilla de Microsoft (solo lectura), abrí este link e iniciá sesión:\n\n' +
+            url +
+            '\n\nCuando termines, volvé y pedime lo que quieras.'
+    );
+}
+
+// Ensures there's a live connection, returning a valid access token or null.
+// On null it has already sent the appropriate prompt (reconnect, or a
+// server-misconfig notice), so the caller just returns.
+async function ensureConnected(ctx) {
+    const { whatsapp, userPhone, emailServices } = ctx;
+    if (!emailServices?.getAccessToken) {
+        await whatsapp.sendMessage(userPhone, CONNECT_UNAVAILABLE_MESSAGE);
+        return null;
+    }
+    try {
+        return await emailServices.getAccessToken();
+    } catch (error) {
+        if (error instanceof NotConnectedError) {
+            await whatsapp.sendMessage(userPhone, RECONNECT_MESSAGE);
+            return null;
+        }
+        throw error;
     }
 }
 
