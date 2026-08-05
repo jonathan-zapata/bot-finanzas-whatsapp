@@ -4,6 +4,10 @@ import {
     getCache as getCacheReal,
     saveCache as saveCacheReal,
 } from './metadataCacheRepo.js';
+import {
+    getTaxonomy as getTaxonomyReal,
+    saveTaxonomy as saveTaxonomyReal,
+} from './taxonomyRepo.js';
 
 // Composes the email agent's runtime services into the single `emailServices`
 // bundle the agent consumes: OAuth (connect / token) + a cached, metadata-only
@@ -24,6 +28,8 @@ export function createEmailServices({
     const {
         getCache = getCacheReal,
         saveCache = saveCacheReal,
+        getTaxonomy = getTaxonomyReal,
+        saveTaxonomy = saveTaxonomyReal,
         makeGraphClient = createGraphClient,
     } = deps;
 
@@ -57,5 +63,7 @@ export function createEmailServices({
         handleCallback: auth.handleCallback,
         getAccessToken: auth.getAccessToken,
         getMailboxData,
+        getTaxonomy: (supabase, phone) => getTaxonomy(supabase, phone),
+        saveTaxonomy: (supabase, phone, categories) => saveTaxonomy(supabase, phone, categories),
     };
 }

@@ -22,9 +22,12 @@ const DEFAULT_MAILBOX = {
 
 // A fake email-services bundle. `connected: true` serves mailbox data;
 // `connected: false` makes getMailboxData/getAccessToken throw
-// NotConnectedError, exercising the reconnect path.
-function fakeEmailServices({ connected = true, mailbox = DEFAULT_MAILBOX } = {}) {
+// NotConnectedError, exercising the reconnect path. `savedTaxonomies` records
+// persisted taxonomies.
+function fakeEmailServices({ connected = true, mailbox = DEFAULT_MAILBOX, taxonomy = null } = {}) {
+    const savedTaxonomies = [];
     return {
+        savedTaxonomies,
         buildConsentUrl: () => 'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=abc',
         getAccessToken: async () => {
             if (!connected) throw new NotConnectedError();
@@ -33,6 +36,11 @@ function fakeEmailServices({ connected = true, mailbox = DEFAULT_MAILBOX } = {})
         getMailboxData: async (_s, _p, { forceRefresh = false } = {}) => {
             if (!connected) throw new NotConnectedError();
             return { ...mailbox, fromCache: !forceRefresh };
+        },
+        getTaxonomy: async () => taxonomy,
+        saveTaxonomy: async (_s, _p, categories) => {
+            savedTaxonomies.push(categories);
+            return categories;
         },
     };
 }
@@ -229,6 +237,61 @@ test('refresh action forces a fresh pull and confirms the unread count', async (
     assert.ok(sawForceRefresh, 'refresh must bypass the cache');
     assert.match(whatsapp.last(), /actualicé/);
     assert.match(whatsapp.last(), /\*3\*/);
+});
+
+test('setup_categories proposes a taxonomy from folders+rules and asks to confirm (nothing stored yet)', async () => {
+    const services = fakeEmailServices({ connected: true });
+    const env = makeDeps({ action: 'setup_categories' });
+    const whatsapp = await handle({ deps: env.deps, remainder: 'armá mis categorías', emailServices: services });
+
+    assert.equal(env.saved.length, 1, 'a pending confirmation was saved');
+    assert.equal(env.saved[0].domain, 'email');
+    assert.equal(env.saved[0].payload.type, 'taxonomy_confirmation');
+    // "Bandeja de entrada" (system) is excluded; "LinkedIn" (folder + rule) kept once.
+    assert.deepEqual(env.saved[0].payload.proposed, ['LinkedIn', 'Otros / Sin clasificar']);
+    assert.equal(services.savedTaxonomies.length, 0, 'nothing persisted before confirmation');
+    assert.match(whatsapp.last(), /LinkedIn/);
+});
+
+test('confirming the taxonomy ("sí") persists it (with standing Other) and clears the question', async () => {
+    const proposed = ['Software', 'Salud', 'Otros / Sin clasificar'];
+    const pending = new Map([
+        [PHONE, { telefono: PHONE, payload: { type: 'taxonomy_confirmation', proposed }, motivo: 'taxonomy_confirmation', dominio: 'email' }],
+    ]);
+    const env = makeDeps({ pending });
+    const services = fakeEmailServices();
+    const whatsapp = await reply({ deps: env.deps, pending: pending.get(PHONE), userText: 'sí, dale', emailServices: services });
+
+    assert.equal(services.savedTaxonomies.length, 1);
+    assert.deepEqual(services.savedTaxonomies[0], proposed);
+    assert.ok(!pending.has(PHONE), 'confirmation cleared');
+    assert.match(whatsapp.last(), /Guardé/);
+});
+
+test('rejecting the taxonomy ("no") stores nothing and clears the question', async () => {
+    const pending = new Map([
+        [PHONE, { telefono: PHONE, payload: { type: 'taxonomy_confirmation', proposed: ['X', 'Otros / Sin clasificar'] }, motivo: 'taxonomy_confirmation', dominio: 'email' }],
+    ]);
+    const env = makeDeps({ pending });
+    const services = fakeEmailServices();
+    const whatsapp = await reply({ deps: env.deps, pending: pending.get(PHONE), userText: 'no', emailServices: services });
+
+    assert.equal(services.savedTaxonomies.length, 0);
+    assert.ok(!pending.has(PHONE));
+    assert.match(whatsapp.last(), /no guardo/);
+});
+
+test('an ambiguous answer to the taxonomy confirmation re-asks and keeps it pending', async () => {
+    const pending = new Map([
+        [PHONE, { telefono: PHONE, payload: { type: 'taxonomy_confirmation', proposed: ['X', 'Otros / Sin clasificar'] }, motivo: 'taxonomy_confirmation', dominio: 'email' }],
+    ]);
+    const env = makeDeps({ pending });
+    const services = fakeEmailServices();
+    const whatsapp = await reply({ deps: env.deps, pending: pending.get(PHONE), userText: 'mmm no sé', emailServices: services });
+
+    assert.equal(services.savedTaxonomies.length, 0);
+    assert.ok(pending.has(PHONE), 'stays pending until a clear yes/no');
+    assert.match(whatsapp.last(), /sí.*no|guardar/i);
 });
 
 test('an out-of-range number re-asks (does not run a wrong action)', async () => {

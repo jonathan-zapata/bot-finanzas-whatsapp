@@ -1,6 +1,8 @@
 import { classifyEmailIntent as classifyEmailIntentReal } from './emailIntentClassifier.js';
 import { NotConnectedError } from './microsoftAuth.js';
 import { formatXrayReport } from './xrayReport.js';
+import { proposeTaxonomy } from './taxonomyBuilder.js';
+import { parseResponse } from './responseParser.js';
 import {
     savePending as savePendingReal,
     deletePending as deletePendingReal,
@@ -125,8 +127,11 @@ async function runEmailAction(action, ctx) {
             case 'refresh':
                 await whatsapp.sendMessage(userPhone, buildRefreshMessage(data));
                 return;
+            case 'setup_categories':
+                await handleSetupCategories(data, ctx);
+                return;
             default:
-                // summary / recommendations / setup_categories — later tickets.
+                // summary / recommendations — later tickets.
                 await whatsapp.sendMessage(userPhone, COMING_SOON_MESSAGE);
                 return;
         }
@@ -177,6 +182,32 @@ function buildRefreshMessage(data) {
     return (
         `🔄 Listo, actualicé los datos de tu casilla. Tenés *${count}* correos sin leer.\n` +
         'Pedime *email radiografía* para ver a dónde va tu correo, o *email resumen* para agruparlos por categoría.'
+    );
+}
+
+// Proposes a taxonomy from the mailbox and asks for a one-time confirmation via
+// the pending-question mechanism. Nothing is stored until the user confirms.
+async function handleSetupCategories(data, ctx) {
+    const { supabase, whatsapp, userPhone, deps = {} } = ctx;
+    const { savePending = savePendingReal } = deps;
+
+    const proposed = proposeTaxonomy({ folders: data.folders, rules: data.rules });
+    await savePending(supabase, {
+        phone: userPhone,
+        domain: EMAIL_DOMAIN,
+        payload: { type: 'taxonomy_confirmation', proposed },
+        reason: 'taxonomy_confirmation',
+    });
+    await whatsapp.sendMessage(userPhone, buildTaxonomyProposalMessage(proposed));
+}
+
+function buildTaxonomyProposalMessage(categories) {
+    const list = categories.map((c) => `• ${c}`).join('\n');
+    return (
+        '🗂️ Armé estas categorías a partir de tus carpetas y reglas actuales:\n\n' +
+        list +
+        '\n\n¿Las guardo así? Respondé *sí* para confirmarlas, o *no* para descartarlas. ' +
+        '(Podés reconstruirlas cuando quieras con *email reconstruir categorías*.)'
     );
 }
 
@@ -234,9 +265,53 @@ export async function handlePendingReply(ctx) {
         return;
     }
 
+    if (payload.type === 'taxonomy_confirmation') {
+        await handleTaxonomyConfirmation(payload, ctx);
+        return;
+    }
+
     // Unknown pending kind (shouldn't happen): clear it and re-offer help.
     await deletePending(supabase, userPhone);
     await whatsapp.sendMessage(userPhone, buildHelpMessage());
+}
+
+// Resolves the one-time taxonomy confirmation (a yes/no reply). On "sí" the
+// proposed taxonomy is persisted (with the standing "Other"); on "no" it's
+// discarded; an ambiguous answer re-asks without losing the proposal.
+async function handleTaxonomyConfirmation(payload, ctx) {
+    const { supabase, whatsapp, userPhone, userText, emailServices, deps = {} } = ctx;
+    const { deletePending = deletePendingReal } = deps;
+
+    const decision = parseResponse(userText);
+
+    if (decision === 'ambiguous') {
+        await whatsapp.sendMessage(
+            userPhone,
+            '🤔 No te entendí. Respondé *sí* para guardar esas categorías, o *no* para descartarlas.'
+        );
+        return;
+    }
+
+    if (decision === 'no') {
+        await deletePending(supabase, userPhone);
+        await whatsapp.sendMessage(
+            userPhone,
+            '👍 Listo, no guardo esas categorías. Cuando quieras, pedime *email configurar categorías* de nuevo.'
+        );
+        return;
+    }
+
+    // decision === 'yes'
+    if (!emailServices?.saveTaxonomy) {
+        await whatsapp.sendMessage(userPhone, CONNECT_UNAVAILABLE_MESSAGE);
+        return;
+    }
+    const saved = await emailServices.saveTaxonomy(supabase, userPhone, payload.proposed);
+    await deletePending(supabase, userPhone);
+    await whatsapp.sendMessage(
+        userPhone,
+        `✅ Guardé tus ${saved.length} categorías. Ya las voy a usar cuando te arme un *resumen* de la bandeja.`
+    );
 }
 
 // Parses a 1-based menu choice from a bare reply ("2", "el 2", "opción 3").
