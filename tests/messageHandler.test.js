@@ -4,17 +4,19 @@ import { handleIncomingMessage } from '../src/messageHandler.js';
 
 // In-memory state + faked deps: we test the handler's state machine without
 // simulating Supabase or the network (dependency injection, the fakeable seam).
-function createEnvironment({ initialPayments = [], pending = {} } = {}) {
+function createEnvironment({ initialPayments = [], pending = {}, processed = [] } = {}) {
     const state = {
         payments: [...initialPayments],
         pending: new Map(Object.entries(pending)),
+        processed: new Set(processed),
     };
     return state;
 }
 
 function makeDeps(state, { extraction, llmError = false } = {}) {
     return {
-        wasAlreadyProcessed: async (_s, messageId) => state.payments.some((p) => p.message_id === messageId),
+        wasProcessed: async (_s, messageId) => state.processed.has(messageId),
+        markProcessed: async (_s, messageId) => state.processed.add(messageId),
         extractExpense: async () => {
             if (llmError) throw new Error('timeout');
             return extraction;
@@ -75,11 +77,11 @@ function invoke(state, deps, { messageId = 'msg-new', text = 'Pagué 2000 de Ant
 }
 
 test('idempotency: ignores an already-processed message_id without writing or replying', async () => {
-    const state = createEnvironment({ initialPayments: [{ telefono: PHONE, message_id: 'msg-repeated', ...baseData }] });
+    const state = createEnvironment({ processed: ['msg-repeated'] });
     const deps = makeDeps(state, { extraction: { isExpense: true, data: baseData } });
     const whatsapp = await invoke(state, deps, { messageId: 'msg-repeated' });
 
-    assert.equal(state.payments.length, 1);
+    assert.equal(state.payments.length, 0);
     assert.equal(whatsapp.messages.length, 0);
 });
 

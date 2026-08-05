@@ -3,24 +3,11 @@ const UNIQUE_VIOLATION_CODE = '23505';
 
 // Table and column names below stay in Spanish: they're the live Supabase
 // schema (see README / deploy notes), not just internal naming.
-
-// Pre-check by message_id: avoids spending an LLM call and a write when
-// WhatsApp retries delivery of an already-processed message.
-// Requires a `message_id` column (ideally unique) on the `pagos` table — see
-// README / deployment notes.
-export async function wasAlreadyProcessed(supabase, messageId) {
-    const { data, error } = await supabase
-        .from(TABLE)
-        .select('id')
-        .eq('message_id', messageId)
-        .maybeSingle();
-
-    if (error) {
-        console.error('❌ Error checking idempotency (continuing without blocking):', error);
-        return false;
-    }
-    return Boolean(data);
-}
+//
+// NOTE: message idempotency now lives in `processedMessagesRepo` (domain-
+// agnostic). The `message_id` UNIQUE constraint below stays as an
+// expense-specific backstop against a race between the idempotency pre-check
+// and the insert.
 
 // Safety net for a race between the pre-check and the insert: if the
 // message_id column has a UNIQUE constraint, a duplicate lands here instead

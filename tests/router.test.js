@@ -34,13 +34,19 @@ function createFakeWhatsapp() {
 // email classifier returns; `expenseExtraction` is what the fake expense
 // extractor returns.
 function makeSpyDeps(state = {}, { emailAction = 'help', expenseExtraction = { isExpense: false } } = {}) {
-    const calls = { extractExpense: 0, classifyEmailIntent: 0, savePayment: 0 };
+    const calls = { extractExpense: 0, classifyEmailIntent: 0, savePayment: 0, markProcessed: 0 };
     const pending = state.pending ?? new Map();
+    const processed = state.processed ?? new Set();
     return {
         calls,
         pending,
+        processed,
         deps: {
-            wasAlreadyProcessed: async () => false,
+            wasProcessed: async (_s, messageId) => processed.has(messageId),
+            markProcessed: async (_s, messageId) => {
+                calls.markProcessed += 1;
+                processed.add(messageId);
+            },
             getPending: async (_s, phone) => pending.get(phone) ?? null,
             // Expense seams
             extractExpense: async () => {
@@ -103,6 +109,15 @@ test('prefixed message → email agent classifier fires, expense extractor does 
     assert.equal(env.calls.classifyEmailIntent, 1);
     assert.equal(env.calls.extractExpense, 0, 'an email request must never hit the expense LLM');
     assert.ok(whatsapp.messages.length >= 1);
+    assert.equal(env.calls.markProcessed, 1, 'the handled message is recorded for idempotency');
+});
+
+test('idempotency covers email messages: a retried email message_id is a no-op', async () => {
+    const env = makeSpyDeps({ processed: new Set(['dup-email']) });
+    const whatsapp = await invoke({ deps: env.deps, text: 'email dame un resumen', messageId: 'dup-email' });
+
+    assert.equal(env.calls.classifyEmailIntent, 0, 'a retry must not re-run the email action');
+    assert.equal(whatsapp.messages.length, 0, 'a retry must not re-send a reply');
 });
 
 test('email prefix is case-insensitive and tolerates leading whitespace', async () => {

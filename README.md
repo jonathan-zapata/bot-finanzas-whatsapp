@@ -20,7 +20,7 @@ A **Level-1 router** picks the agent by explicit prefix (never an LLM guess); an
    - No match → saved directly.
 7. The bot replies on WhatsApp confirming what was logged.
 
-Every message is processed idempotently by `message_id`: if Meta retries delivery of a webhook, the expense isn't duplicated and the LLM isn't queried again.
+Every message is processed idempotently by `message_id`, recorded in a domain-agnostic `mensajes_procesados` ledger: if Meta retries delivery of a webhook, the action isn't repeated and the LLM isn't queried again — for **either** agent (expenses and email). The `pagos.message_id` UNIQUE constraint remains as an expense-specific backstop against races.
 
 ## Project structure
 

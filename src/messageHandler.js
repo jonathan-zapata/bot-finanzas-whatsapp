@@ -1,4 +1,7 @@
-import { wasAlreadyProcessed as wasAlreadyProcessedReal } from './paymentsRepo.js';
+import {
+    wasProcessed as wasProcessedReal,
+    markProcessed as markProcessedReal,
+} from './processedMessagesRepo.js';
 import { getPending as getPendingReal } from './pendingConfirmationsRepo.js';
 import { expenseAgent, EXPENSE_DOMAIN } from './expenseAgent.js';
 import { emailAgent } from './emailAgent.js';
@@ -69,12 +72,14 @@ export async function handleIncomingMessage(args) {
     } = args;
 
     const {
-        wasAlreadyProcessed = wasAlreadyProcessedReal,
+        wasProcessed = wasProcessedReal,
+        markProcessed = markProcessedReal,
         getPending = getPendingReal,
     } = deps;
 
-    // 1. Idempotency: a webhook retry for a message we already processed.
-    if (await wasAlreadyProcessed(supabase, messageId)) {
+    // 1. Idempotency: a webhook retry for a message we already handled — for ANY
+    //    agent (the ledger is domain-agnostic, so email requests are covered too).
+    if (await wasProcessed(supabase, messageId)) {
         console.log(`Message ${messageId} already processed, ignoring WhatsApp retry.`);
         return;
     }
@@ -98,22 +103,27 @@ export async function handleIncomingMessage(args) {
             emailServices,
             deps,
         });
-        return;
+    } else {
+        // 3. Fresh message → Level-1 prefix routing to the owning agent.
+        const { agent, remainder } = routeByPrefix(userText);
+        await agent.handleMessage({
+            supabase,
+            ai,
+            whatsapp,
+            userPhone,
+            messageId,
+            userText,
+            remainder,
+            model,
+            confirmationWindowMinutes,
+            emailServices,
+            deps,
+        });
     }
 
-    // 3. Fresh message → Level-1 prefix routing to the owning agent.
-    const { agent, remainder } = routeByPrefix(userText);
-    await agent.handleMessage({
-        supabase,
-        ai,
-        whatsapp,
-        userPhone,
-        messageId,
-        userText,
-        remainder,
-        model,
-        confirmationWindowMinutes,
-        emailServices,
-        deps,
-    });
+    // 4. Record the message as handled so a later retry is a no-op. Done only
+    //    after successful handling: if a handler threw, index.js returns 500 and
+    //    Meta retries — which we WANT, since nothing was recorded. markProcessed
+    //    is best-effort (never throws) so it can't turn a sent reply into a 500.
+    await markProcessed(supabase, messageId, userPhone);
 }
