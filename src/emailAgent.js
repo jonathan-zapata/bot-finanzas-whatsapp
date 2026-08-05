@@ -1,5 +1,6 @@
 import { classifyEmailIntent as classifyEmailIntentReal } from './emailIntentClassifier.js';
 import { NotConnectedError } from './microsoftAuth.js';
+import { formatXrayReport } from './xrayReport.js';
 import {
     savePending as savePendingReal,
     deletePending as deletePendingReal,
@@ -95,10 +96,10 @@ export function matchPrefix(userText) {
     return { matched: false, remainder: '' };
 }
 
-// Runs a resolved action. `help` and `connect` are implemented; the mailbox
-// actions gate on a live connection (reconnect prompt if missing) and then
-// answer "coming soon" until their ticket lands (05–08), which will replace the
-// coming-soon branch with the real read-only logic.
+// Runs a resolved action. `help` and `connect` are implemented; `xray` and
+// `refresh` are implemented here (ticket 05). The remaining mailbox actions
+// (summary → 07, recommendations → 08, setup_categories → 06) load the mailbox
+// data the same way and answer "coming soon" until their ticket lands.
 async function runEmailAction(action, ctx) {
     const { whatsapp, userPhone } = ctx;
 
@@ -113,11 +114,22 @@ async function runEmailAction(action, ctx) {
     }
 
     if (MAILBOX_ACTIONS.has(action)) {
-        const token = await ensureConnected(ctx);
-        if (token === null) return; // reconnect prompt already sent
-        // TODO(tickets 05–08): dispatch to the real read-only action here.
-        await whatsapp.sendMessage(userPhone, COMING_SOON_MESSAGE);
-        return;
+        // `email refresh` bypasses the ~2h cache; everything else serves it.
+        const data = await loadMailbox(ctx, { forceRefresh: action === 'refresh' });
+        if (data === null) return; // reconnect / misconfig prompt already sent
+
+        switch (action) {
+            case 'xray':
+                await whatsapp.sendMessage(userPhone, formatXrayReport(data));
+                return;
+            case 'refresh':
+                await whatsapp.sendMessage(userPhone, buildRefreshMessage(data));
+                return;
+            default:
+                // summary / recommendations / setup_categories — later tickets.
+                await whatsapp.sendMessage(userPhone, COMING_SOON_MESSAGE);
+                return;
+        }
     }
 
     // Defensive default (the classifier's enum shouldn't produce anything else).
@@ -140,17 +152,17 @@ async function handleConnect(ctx) {
     );
 }
 
-// Ensures there's a live connection, returning a valid access token or null.
-// On null it has already sent the appropriate prompt (reconnect, or a
-// server-misconfig notice), so the caller just returns.
-async function ensureConnected(ctx) {
-    const { whatsapp, userPhone, emailServices } = ctx;
-    if (!emailServices?.getAccessToken) {
+// Loads the (cached or fresh) mailbox metadata for a mailbox action, returning
+// the data or null. On null it has already sent the right prompt (reconnect, or
+// a server-misconfig notice), so the caller just returns.
+async function loadMailbox(ctx, { forceRefresh = false } = {}) {
+    const { supabase, whatsapp, userPhone, emailServices } = ctx;
+    if (!emailServices?.getMailboxData) {
         await whatsapp.sendMessage(userPhone, CONNECT_UNAVAILABLE_MESSAGE);
         return null;
     }
     try {
-        return await emailServices.getAccessToken();
+        return await emailServices.getMailboxData(supabase, userPhone, { forceRefresh });
     } catch (error) {
         if (error instanceof NotConnectedError) {
             await whatsapp.sendMessage(userPhone, RECONNECT_MESSAGE);
@@ -158,6 +170,14 @@ async function ensureConnected(ctx) {
         }
         throw error;
     }
+}
+
+function buildRefreshMessage(data) {
+    const count = data.messages?.length ?? 0;
+    return (
+        `🔄 Listo, actualicé los datos de tu casilla. Tenés *${count}* correos sin leer.\n` +
+        'Pedime *email radiografía* para ver a dónde va tu correo, o *email resumen* para agruparlos por categoría.'
+    );
 }
 
 // Fresh prefixed message: length cap → classify → run, or ask to disambiguate.

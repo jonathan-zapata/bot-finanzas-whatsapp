@@ -3,15 +3,36 @@ import assert from 'node:assert/strict';
 import { emailAgent } from '../src/emailAgent.js';
 import { NotConnectedError } from '../src/microsoftAuth.js';
 
-// A fake email-services bundle. `connected: true` yields an access token;
-// `connected: false` makes getAccessToken throw NotConnectedError, exercising
-// the reconnect path.
-function fakeEmailServices({ connected = true } = {}) {
+const DEFAULT_MAILBOX = {
+    messages: [
+        { parentFolderId: 'inbox-id', from: { name: 'A', address: 'a@x.com' }, subject: 's1', isRead: false, hasAttachments: false, receivedDateTime: '2026-08-01T10:00:00Z' },
+        { parentFolderId: 'linkedin-id', from: { name: 'LinkedIn', address: 'jobs@linkedin.com' }, subject: 's2', isRead: false, hasAttachments: false, receivedDateTime: '2026-08-01T11:00:00Z' },
+        { parentFolderId: 'linkedin-id', from: { name: 'LinkedIn', address: 'news@linkedin.com' }, subject: 's3', isRead: false, hasAttachments: false, receivedDateTime: '2026-08-01T12:00:00Z' },
+    ],
+    folders: [
+        { id: 'inbox-id', displayName: 'Bandeja de entrada' },
+        { id: 'linkedin-id', displayName: 'LinkedIn' },
+    ],
+    inbox: { id: 'inbox-id', displayName: 'Bandeja de entrada' },
+    rules: [
+        { displayName: 'LinkedIn', isEnabled: true, sequence: 1, conditions: { senderContains: ['linkedin.com'] }, actions: { moveToFolder: 'linkedin-id' } },
+    ],
+    fromCache: true,
+};
+
+// A fake email-services bundle. `connected: true` serves mailbox data;
+// `connected: false` makes getMailboxData/getAccessToken throw
+// NotConnectedError, exercising the reconnect path.
+function fakeEmailServices({ connected = true, mailbox = DEFAULT_MAILBOX } = {}) {
     return {
         buildConsentUrl: () => 'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=abc',
         getAccessToken: async () => {
             if (!connected) throw new NotConnectedError();
             return 'access-token-123';
+        },
+        getMailboxData: async (_s, _p, { forceRefresh = false } = {}) => {
+            if (!connected) throw new NotConnectedError();
+            return { ...mailbox, fromCache: !forceRefresh };
         },
     };
 }
@@ -77,7 +98,7 @@ test('help action → replies with the functionality list (implemented end to en
     assert.equal(env.saved.length, 0, 'help does not create a pending question');
 });
 
-test('a not-yet-built action classifies correctly and replies "coming soon"', async () => {
+test('a not-yet-built mailbox action (summary) loads the mailbox and replies "coming soon"', async () => {
     const env = makeDeps({ action: 'summary' });
     const whatsapp = await handle({ deps: env.deps, remainder: 'dame un resumen' });
 
@@ -118,7 +139,7 @@ test('bare number reply to the menu resolves to that action and runs it', async 
     assert.ok(!pending.has(PHONE), 'pending question cleared after resolution');
 });
 
-test('a bare number reply resolves a coming-soon action too', async () => {
+test('a bare number reply resolves a mailbox action and runs it', async () => {
     const pending = new Map([
         [
             PHONE,
@@ -133,7 +154,7 @@ test('a bare number reply resolves a coming-soon action too', async () => {
     const env = makeDeps({ pending });
     const whatsapp = await reply({ deps: env.deps, pending: pending.get(PHONE), userText: 'la 2' });
 
-    assert.match(whatsapp.last(), /construcción/, 'resolved to xray (coming soon)');
+    assert.match(whatsapp.last(), /Radiografía/, 'resolved to xray and ran it');
     assert.ok(!pending.has(PHONE));
 });
 
@@ -176,7 +197,7 @@ test('a mailbox action with no connection → reconnect prompt, no "coming soon"
     assert.doesNotMatch(whatsapp.last(), /construcción/, 'must not proceed to the action when not connected');
 });
 
-test('a mailbox action WITH a connection → proceeds (coming soon for now)', async () => {
+test('xray action WITH a connection → deterministic report (unread count, folders, rules)', async () => {
     const env = makeDeps({ action: 'xray' });
     const whatsapp = await handle({
         deps: env.deps,
@@ -184,7 +205,30 @@ test('a mailbox action WITH a connection → proceeds (coming soon for now)', as
         emailServices: fakeEmailServices({ connected: true }),
     });
 
-    assert.match(whatsapp.last(), /construcción/);
+    const text = whatsapp.last();
+    assert.match(text, /Radiografía/);
+    assert.match(text, /sin leer: \*3\*/, 'unread count');
+    assert.match(text, /LinkedIn: 2/, 'folder breakdown');
+    assert.match(text, /Bandeja de entrada: 1/, 'unrouted inbox mail counted under Inbox');
+    assert.match(text, /\*LinkedIn\*/, 'rule listed');
+});
+
+test('refresh action forces a fresh pull and confirms the unread count', async () => {
+    const env = makeDeps({ action: 'refresh' });
+    let sawForceRefresh = false;
+    const services = fakeEmailServices({ connected: true });
+    const wrapped = {
+        ...services,
+        getMailboxData: async (s, p, opts) => {
+            sawForceRefresh = opts?.forceRefresh === true;
+            return services.getMailboxData(s, p, opts);
+        },
+    };
+    const whatsapp = await handle({ deps: env.deps, remainder: 'actualizá', emailServices: wrapped });
+
+    assert.ok(sawForceRefresh, 'refresh must bypass the cache');
+    assert.match(whatsapp.last(), /actualicé/);
+    assert.match(whatsapp.last(), /\*3\*/);
 });
 
 test('an out-of-range number re-asks (does not run a wrong action)', async () => {

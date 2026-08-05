@@ -73,6 +73,13 @@ function makeSpyDeps(state = {}, { emailAction = 'help', expenseExtraction = { i
 const connectedEmailServices = {
     buildConsentUrl: () => 'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize',
     getAccessToken: async () => 'access-token',
+    getMailboxData: async () => ({
+        messages: [{ parentFolderId: 'inbox-id', from: { name: 'A', address: 'a@x.com' } }],
+        folders: [{ id: 'inbox-id', displayName: 'Bandeja de entrada' }],
+        inbox: { id: 'inbox-id', displayName: 'Bandeja de entrada' },
+        rules: [],
+        fromCache: true,
+    }),
 };
 
 function invoke({ deps, text, messageId = 'm1' }) {

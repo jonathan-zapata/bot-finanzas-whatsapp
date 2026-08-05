@@ -5,7 +5,7 @@ import { config } from './src/config.js';
 import { createWhatsAppClient, verifyWebhookSignature } from './src/whatsappClient.js';
 import { handleIncomingMessage } from './src/messageHandler.js';
 import { createSecretManager } from './src/secretManager.js';
-import { createEmailAuthService } from './src/microsoftAuth.js';
+import { createEmailServices } from './src/emailServices.js';
 
 const app = express();
 // We keep the raw body (rawBody) because Meta's signature verification is
@@ -27,7 +27,7 @@ const whatsapp = createWhatsAppClient({ token: config.whatsappToken, phoneNumber
 // isn't configured yet — it only reaches for Secret Manager when an email
 // request actually needs the mailbox.
 const secretManager = createSecretManager({ projectId: config.gcpProjectId });
-const emailServices = createEmailAuthService({ config: config.microsoft, secretManager });
+const emailServices = createEmailServices({ config: config.microsoft, secretManager });
 
 // ==========================================
 // ROUTE 1: META VERIFICATION
