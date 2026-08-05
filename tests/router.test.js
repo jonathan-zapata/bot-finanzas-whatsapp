@@ -4,8 +4,9 @@ import { handleIncomingMessage } from '../src/messageHandler.js';
 
 // Level-1 router tests: prefix present → email agent; absent/unknown → expense
 // agent (unchanged); over-length → rejection; pending reply → routed to the
-// agent that asked. Same fake-seams style as messageHandler.test.js: no
-// Supabase, no network, no credentials.
+// agent that asked. These assert on *which seam fired* (expense extractor vs.
+// email classifier) rather than exact copy, so they stay stable as the agents'
+// wording evolves. Same fake-seams style as messageHandler.test.js.
 
 const PHONE = '59891111111';
 
@@ -29,10 +30,11 @@ function createFakeWhatsapp() {
     };
 }
 
-// A deps object that records whether the expense/LLM seams were touched, so we
-// can assert an email message never falls through to the expense extractor.
-function makeSpyDeps(state = {}, { extraction = { isExpense: false } } = {}) {
-    const calls = { extractExpense: 0, savePayment: 0, savePending: 0 };
+// Records which agent's seams were touched. `emailAction` is what the fake
+// email classifier returns; `expenseExtraction` is what the fake expense
+// extractor returns.
+function makeSpyDeps(state = {}, { emailAction = 'help', expenseExtraction = { isExpense: false } } = {}) {
+    const calls = { extractExpense: 0, classifyEmailIntent: 0, savePayment: 0 };
     const pending = state.pending ?? new Map();
     return {
         calls,
@@ -40,17 +42,23 @@ function makeSpyDeps(state = {}, { extraction = { isExpense: false } } = {}) {
         deps: {
             wasAlreadyProcessed: async () => false,
             getPending: async (_s, phone) => pending.get(phone) ?? null,
+            // Expense seams
             extractExpense: async () => {
                 calls.extractExpense += 1;
-                return extraction;
+                return expenseExtraction;
             },
             findExactDuplicate: async () => null,
             savePayment: async () => {
                 calls.savePayment += 1;
                 return { duplicate: false };
             },
+            // Email seams
+            classifyEmailIntent: async () => {
+                calls.classifyEmailIntent += 1;
+                return emailAction;
+            },
+            // Shared pending store
             savePending: async (_s, { phone, payload, reason, domain }) => {
-                calls.savePending += 1;
                 pending.set(phone, { telefono: phone, payload, motivo: reason, dominio: domain });
             },
             deletePending: async (_s, phone) => {
@@ -73,63 +81,73 @@ function invoke({ deps, text, messageId = 'm1' }) {
     }).then(() => whatsapp);
 }
 
-test('prefixed message → reaches the email agent (coming soon), never the expense extractor', async () => {
+test('prefixed message → email agent classifier fires, expense extractor does not', async () => {
     const env = makeSpyDeps();
     const whatsapp = await invoke({ deps: env.deps, text: 'email dame un resumen' });
 
-    assert.match(whatsapp.messages[0].text, /construcción/);
-    assert.equal(env.calls.extractExpense, 0, 'an email request must not hit the expense LLM');
-    assert.equal(env.calls.savePayment, 0);
+    assert.equal(env.calls.classifyEmailIntent, 1);
+    assert.equal(env.calls.extractExpense, 0, 'an email request must never hit the expense LLM');
+    assert.ok(whatsapp.messages.length >= 1);
 });
 
 test('email prefix is case-insensitive and tolerates leading whitespace', async () => {
     const env = makeSpyDeps();
-    const whatsapp = await invoke({ deps: env.deps, text: '  EMAIL resumen' });
-    assert.match(whatsapp.messages[0].text, /construcción/);
+    await invoke({ deps: env.deps, text: '  EMAIL resumen' });
+    assert.equal(env.calls.classifyEmailIntent, 1);
     assert.equal(env.calls.extractExpense, 0);
 });
 
-test('no prefix → expense agent, unchanged (extractor runs)', async () => {
-    const env = makeSpyDeps({}, { extraction: { isExpense: true, data: baseData } });
+test('no prefix → expense agent, unchanged (extractor runs, classifier does not)', async () => {
+    const env = makeSpyDeps({}, { expenseExtraction: { isExpense: true, data: baseData } });
     const whatsapp = await invoke({ deps: env.deps, text: 'Pagué 2000 de Antel' });
 
     assert.equal(env.calls.extractExpense, 1);
+    assert.equal(env.calls.classifyEmailIntent, 0);
     assert.equal(env.calls.savePayment, 1);
     assert.match(whatsapp.messages[0].text, /Anotado/);
 });
 
 test('unknown/lookalike prefix ("emails …") → expense agent, not email', async () => {
-    const env = makeSpyDeps({}, { extraction: { isExpense: false } });
-    const whatsapp = await invoke({ deps: env.deps, text: 'emails viejos que tengo' });
+    const env = makeSpyDeps({}, { expenseExtraction: { isExpense: false } });
+    await invoke({ deps: env.deps, text: 'emails viejos que tengo' });
 
     assert.equal(env.calls.extractExpense, 1, '"emails" is not the prefix — must go to expense');
-    assert.doesNotMatch(whatsapp.messages[0].text, /construcción/);
+    assert.equal(env.calls.classifyEmailIntent, 0);
 });
 
-test('over-length request (post-prefix > 1000 chars) → rejected, before any LLM call', async () => {
+test('over-length request (post-prefix > 1000 chars) → rejected before any LLM call', async () => {
     const env = makeSpyDeps();
-    const longBody = 'a'.repeat(1001);
-    const whatsapp = await invoke({ deps: env.deps, text: `email ${longBody}` });
+    const whatsapp = await invoke({ deps: env.deps, text: `email ${'a'.repeat(1001)}` });
 
     assert.match(whatsapp.messages[0].text, /demasiado larga/);
-    assert.equal(env.calls.extractExpense, 0, 'no LLM call on an over-length request');
+    assert.equal(env.calls.classifyEmailIntent, 0, 'no classifier call on an over-length request');
+    assert.equal(env.calls.extractExpense, 0);
 });
 
-test('a request exactly at the 1000-char cap is accepted (coming soon)', async () => {
+test('a request exactly at the 1000-char cap is accepted (classifier runs)', async () => {
     const env = makeSpyDeps();
-    const whatsapp = await invoke({ deps: env.deps, text: `email ${'a'.repeat(1000)}` });
-    assert.match(whatsapp.messages[0].text, /construcción/);
+    await invoke({ deps: env.deps, text: `email ${'a'.repeat(1000)}` });
+    assert.equal(env.calls.classifyEmailIntent, 1);
 });
 
 test('pending reply is routed to the email agent when the email domain asked', async () => {
     const pending = new Map([
-        [PHONE, { telefono: PHONE, payload: {}, motivo: 'disambiguation', dominio: 'email' }],
+        [
+            PHONE,
+            {
+                telefono: PHONE,
+                payload: { type: 'disambiguation', options: ['summary', 'xray'] },
+                motivo: 'email_disambiguation',
+                dominio: 'email',
+            },
+        ],
     ]);
     const env = makeSpyDeps({ pending });
     const whatsapp = await invoke({ deps: env.deps, text: '2' });
 
-    assert.match(whatsapp.messages[0].text, /construcción/, 'email agent handled the reply');
     assert.equal(env.calls.savePayment, 0, 'must not be treated as an expense confirmation');
+    assert.ok(whatsapp.messages.length >= 1, 'email agent produced a reply');
+    assert.ok(!pending.has(PHONE), 'resolved choice cleared the pending question');
 });
 
 test('pending reply with no/expense domain still goes to the expense agent', async () => {
