@@ -2,6 +2,8 @@ import { classifyEmailIntent as classifyEmailIntentReal } from './emailIntentCla
 import { NotConnectedError } from './microsoftAuth.js';
 import { formatXrayReport } from './xrayReport.js';
 import { proposeTaxonomy } from './taxonomyBuilder.js';
+import { classifySenders as classifySendersReal } from './summaryClassifier.js';
+import { collectSenders, formatSummaryReport } from './summaryReport.js';
 import { parseResponse } from './responseParser.js';
 import {
     savePending as savePendingReal,
@@ -130,8 +132,11 @@ async function runEmailAction(action, ctx) {
             case 'setup_categories':
                 await handleSetupCategories(data, ctx);
                 return;
+            case 'summary':
+                await handleSummary(data, ctx);
+                return;
             default:
-                // summary / recommendations — later tickets.
+                // recommendations — ticket 08.
                 await whatsapp.sendMessage(userPhone, COMING_SOON_MESSAGE);
                 return;
         }
@@ -199,6 +204,36 @@ async function handleSetupCategories(data, ctx) {
         reason: 'taxonomy_confirmation',
     });
     await whatsapp.sendMessage(userPhone, buildTaxonomyProposalMessage(proposed));
+}
+
+const NEEDS_TAXONOMY_MESSAGE =
+    '🗂️ Antes de armarte un resumen necesito tus categorías. Escribí *email configurar categorías* y confirmalas una vez; después te agrupo la bandeja por categoría.';
+
+// The semantic "who / what": unread count over the Inbox specifically, senders
+// grouped into the CONFIRMED taxonomy via the LLM (sender-level, metadata only),
+// with an "appears to need action" highlight. Reuses the ~2h-cached metadata, so
+// follow-up questions are cheap. Requires a confirmed taxonomy first.
+async function handleSummary(data, ctx) {
+    const { ai, whatsapp, userPhone, supabase, model, emailServices, deps = {} } = ctx;
+    const { classifySenders = classifySendersReal } = deps;
+
+    const taxonomy = emailServices?.getTaxonomy ? await emailServices.getTaxonomy(supabase, userPhone) : null;
+    if (!taxonomy || taxonomy.length === 0) {
+        await whatsapp.sendMessage(userPhone, NEEDS_TAXONOMY_MESSAGE);
+        return;
+    }
+
+    // Inbox contents specifically — the mail the user actually sees.
+    const inboxId = data.inbox?.id;
+    const inboxMessages = (data.messages ?? []).filter((m) => m.parentFolderId === inboxId);
+
+    const senders = collectSenders(inboxMessages);
+    const assignments = await classifySenders(ai, { senders, categories: taxonomy }, model);
+
+    await whatsapp.sendMessage(
+        userPhone,
+        formatSummaryReport({ messages: inboxMessages, taxonomy, assignments })
+    );
 }
 
 function buildTaxonomyProposalMessage(categories) {

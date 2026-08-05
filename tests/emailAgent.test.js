@@ -62,13 +62,14 @@ function createFakeWhatsapp() {
     };
 }
 
-function makeDeps({ action = 'unclear', pending = new Map() } = {}) {
+function makeDeps({ action = 'unclear', pending = new Map(), assignments = [] } = {}) {
     const saved = [];
     return {
         saved,
         pending,
         deps: {
             classifyEmailIntent: async () => action,
+            classifySenders: async () => assignments,
             savePending: async (_s, entry) => {
                 saved.push(entry);
                 pending.set(entry.phone, {
@@ -104,14 +105,6 @@ test('help action → replies with the functionality list (implemented end to en
     assert.match(whatsapp.last(), /Asistente de email/);
     assert.match(whatsapp.last(), /Resumen de tu bandeja/);
     assert.equal(env.saved.length, 0, 'help does not create a pending question');
-});
-
-test('a not-yet-built mailbox action (summary) loads the mailbox and replies "coming soon"', async () => {
-    const env = makeDeps({ action: 'summary' });
-    const whatsapp = await handle({ deps: env.deps, remainder: 'dame un resumen' });
-
-    assert.match(whatsapp.last(), /construcción/);
-    assert.equal(env.saved.length, 0);
 });
 
 test('unclear → saves a numbered menu as a pending email question, runs no action', async () => {
@@ -292,6 +285,70 @@ test('an ambiguous answer to the taxonomy confirmation re-asks and keeps it pend
     assert.equal(services.savedTaxonomies.length, 0);
     assert.ok(pending.has(PHONE), 'stays pending until a clear yes/no');
     assert.match(whatsapp.last(), /sí.*no|guardar/i);
+});
+
+test('summary without a confirmed taxonomy → prompts to configure categories first', async () => {
+    const env = makeDeps({ action: 'summary' });
+    const services = fakeEmailServices({ connected: true, taxonomy: null });
+    const whatsapp = await handle({ deps: env.deps, remainder: 'dame un resumen', emailServices: services });
+
+    assert.match(whatsapp.last(), /configurar categorías/);
+});
+
+test('summary groups Inbox senders into the confirmed taxonomy (metadata only)', async () => {
+    const mailbox = {
+        messages: [
+            { parentFolderId: 'inbox-id', from: { name: 'GitHub', address: 'noreply@github.com' }, subject: 'PR', isRead: false, hasAttachments: false },
+            { parentFolderId: 'inbox-id', from: { name: 'ANV', address: 'anv@gub.uy' }, subject: 'Trámite', isRead: false, hasAttachments: true },
+            // This one is in another folder, so it must NOT count in the summary.
+            { parentFolderId: 'linkedin-id', from: { name: 'LinkedIn', address: 'x@linkedin.com' }, subject: 'Jobs', isRead: false, hasAttachments: false },
+        ],
+        folders: [{ id: 'inbox-id', displayName: 'Bandeja de entrada' }, { id: 'linkedin-id', displayName: 'LinkedIn' }],
+        inbox: { id: 'inbox-id', displayName: 'Bandeja de entrada' },
+        rules: [],
+    };
+    const taxonomy = ['Software', 'Gobierno', 'Otros / Sin clasificar'];
+    const assignments = [
+        { sender: 'noreply@github.com', category: 'Software' },
+        { sender: 'anv@gub.uy', category: 'Gobierno' },
+    ];
+    const env = makeDeps({ action: 'summary', assignments });
+    const services = fakeEmailServices({ connected: true, taxonomy, mailbox });
+    const whatsapp = await handle({ deps: env.deps, remainder: 'resumen', emailServices: services });
+
+    const text = whatsapp.last();
+    assert.match(text, /Sin leer en la bandeja: \*2\*/, 'Inbox-only count (LinkedIn folder excluded)');
+    assert.match(text, /\*Software\*: 1/);
+    assert.match(text, /\*Gobierno\*: 1/);
+    assert.doesNotMatch(text, /LinkedIn/, 'mail already filed away is not in the Inbox summary');
+    assert.match(text, /Parecen necesitar acción/);
+    assert.match(text, /Trámite/, 'the attachment mail is flagged as needing action');
+});
+
+test('summary sends only sender metadata to the classifier (never bodies)', async () => {
+    const mailbox = {
+        messages: [{ parentFolderId: 'inbox-id', from: { name: 'A', address: 'a@x.com' }, subject: 'Hola', isRead: false }],
+        folders: [{ id: 'inbox-id', displayName: 'Inbox' }],
+        inbox: { id: 'inbox-id', displayName: 'Inbox' },
+        rules: [],
+    };
+    let received;
+    const env = {
+        saved: [],
+        pending: new Map(),
+        deps: {
+            classifyEmailIntent: async () => 'summary',
+            classifySenders: async (_ai, arg) => {
+                received = arg;
+                return [{ sender: 'a@x.com', category: 'Otros / Sin clasificar' }];
+            },
+        },
+    };
+    const services = fakeEmailServices({ connected: true, taxonomy: ['Otros / Sin clasificar'], mailbox });
+    await handle({ deps: env.deps, remainder: 'resumen', emailServices: services });
+
+    assert.deepEqual(received.senders[0], { address: 'a@x.com', name: 'A', subjects: ['Hola'] });
+    assert.equal(JSON.stringify(received).includes('body'), false, 'no body field is ever passed');
 });
 
 test('an out-of-range number re-asks (does not run a wrong action)', async () => {
