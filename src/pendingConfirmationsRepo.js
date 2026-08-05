@@ -30,13 +30,24 @@ export async function getPending(supabase, phone, windowMinutes = DEFAULT_WINDOW
 }
 
 // Saves (or replaces) the user's pending confirmation. Upsert by phone: there
-// can only be one open question per number, and saving a new one resets the
-// TTL clock.
-export async function savePending(supabase, { phone, payload, reason }) {
+// can only be one open question per number (shared across agents — fine for a
+// single-user bot), and saving a new one resets the TTL clock.
+//
+// `domain` records which agent asked the question (column `dominio`) so a bare
+// reply ("2", "sí") can be routed back to that agent. It defaults to the
+// expense domain to stay backward-compatible with the original single-agent
+// caller.
+export async function savePending(supabase, { phone, payload, reason, domain = 'expense' }) {
     const { error } = await supabase
         .from(TABLE)
         .upsert(
-            { telefono: phone, payload, motivo: reason, created_at: new Date().toISOString() },
+            {
+                telefono: phone,
+                payload,
+                motivo: reason,
+                dominio: domain,
+                created_at: new Date().toISOString(),
+            },
             { onConflict: 'telefono' }
         );
     if (error) throw error;
