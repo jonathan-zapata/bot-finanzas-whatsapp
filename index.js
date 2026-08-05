@@ -55,7 +55,7 @@ app.get('/oauth/microsoft/callback', async (req, res) => {
     const { code, error, error_description: errorDescription } = req.query;
     if (error) {
         console.warn('⚠️ Microsoft OAuth returned an error:', error, errorDescription);
-        res.status(400).send(`No se pudo conectar: ${error_description || error}`);
+        res.status(400).send(`No se pudo conectar: ${errorDescription || error}`);
         return;
     }
     if (!code) {
