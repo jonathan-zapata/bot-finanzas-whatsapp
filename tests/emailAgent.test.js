@@ -351,6 +351,33 @@ test('summary sends only sender metadata to the classifier (never bodies)', asyn
     assert.equal(JSON.stringify(received).includes('body'), false, 'no body field is ever passed');
 });
 
+test('recommendations → one-shot informational report; no mailbox mutation call is made', async () => {
+    const env = makeDeps({ action: 'recommendations' });
+    // Tripwire: any mutating seam throws if the agent ever calls it. The
+    // read-only recommendations path must never touch these.
+    const mutationTripwire = () => {
+        throw new Error('recommendations must not write to the mailbox');
+    };
+    const services = {
+        ...fakeEmailServices({ connected: true, taxonomy: ['Software', 'Otros / Sin clasificar'] }),
+        // Non-existent in real life, present here only to fail loudly if used.
+        moveMessage: mutationTripwire,
+        createFolder: mutationTripwire,
+        deleteRule: mutationTripwire,
+        updateRule: mutationTripwire,
+    };
+    let saveTaxonomyCalls = 0;
+    services.saveTaxonomy = async () => {
+        saveTaxonomyCalls += 1;
+    };
+
+    const whatsapp = await handle({ deps: env.deps, remainder: 'recomendaciones', emailServices: services });
+
+    assert.match(whatsapp.last(), /Recomendaciones/);
+    assert.match(whatsapp.last(), /NO cambié ni voy a cambiar nada/);
+    assert.equal(saveTaxonomyCalls, 0, 'recommendations must not persist anything');
+});
+
 test('an out-of-range number re-asks (does not run a wrong action)', async () => {
     const pending = new Map([
         [

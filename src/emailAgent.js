@@ -4,6 +4,7 @@ import { formatXrayReport } from './xrayReport.js';
 import { proposeTaxonomy } from './taxonomyBuilder.js';
 import { classifySenders as classifySendersReal } from './summaryClassifier.js';
 import { collectSenders, formatSummaryReport } from './summaryReport.js';
+import { formatRecommendationsReport } from './recommendationsReport.js';
 import { parseResponse } from './responseParser.js';
 import {
     savePending as savePendingReal,
@@ -135,8 +136,11 @@ async function runEmailAction(action, ctx) {
             case 'summary':
                 await handleSummary(data, ctx);
                 return;
+            case 'recommendations':
+                await handleRecommendations(data, ctx);
+                return;
             default:
-                // recommendations — ticket 08.
+                // The classifier's enum shouldn't produce anything else.
                 await whatsapp.sendMessage(userPhone, COMING_SOON_MESSAGE);
                 return;
         }
@@ -233,6 +237,18 @@ async function handleSummary(data, ctx) {
     await whatsapp.sendMessage(
         userPhone,
         formatSummaryReport({ messages: inboxMessages, taxonomy, assignments })
+    );
+}
+
+// One-shot informational recommendations: a proposed folder structure plus a
+// hide-vs-noise verdict on each rule. Read-only — no approve/reject loop, no
+// mutation — and the report says so explicitly.
+async function handleRecommendations(data, ctx) {
+    const { whatsapp, userPhone, supabase, emailServices } = ctx;
+    const taxonomy = emailServices?.getTaxonomy ? await emailServices.getTaxonomy(supabase, userPhone) : null;
+    await whatsapp.sendMessage(
+        userPhone,
+        formatRecommendationsReport({ folders: data.folders, rules: data.rules, taxonomy })
     );
 }
 
