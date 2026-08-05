@@ -75,21 +75,40 @@ export function buildRulesReport({ rules, folders }) {
         }));
 }
 
+// The mail that lands in the recent-window breakdown: everything received on or
+// after the cutoff (read or unread). Without a cutoff (older cached shape) it's
+// all messages, preserving prior behavior.
+function recentMessages(data) {
+    const messages = data.messages ?? [];
+    if (!data.cutoffIso) return messages;
+    return messages.filter((m) => m.receivedDateTime && m.receivedDateTime >= data.cutoffIso);
+}
+
 // Renders the full x-ray as a WhatsApp message.
 export function formatXrayReport(data) {
     const messages = data.messages ?? [];
-    const breakdown = buildFolderBreakdown(data);
+    const unreadCount = messages.filter((m) => !m.isRead).length;
+    const recent = recentMessages(data);
+    const breakdown = buildFolderBreakdown({ messages: recent, folders: data.folders, inbox: data.inbox });
     const rules = buildRulesReport(data);
 
     const lines = ['📊 *Radiografía de tu correo* (solo lectura, no toqué nada)', ''];
-    lines.push(`📥 Correos sin leer: *${messages.length}*`);
+    lines.push(`📥 Correos sin leer: *${unreadCount}*`);
     lines.push('');
 
-    lines.push('📂 *Dónde está tu correo sin leer:*');
+    const windowNote = data.windowDays ? ` *(últimos ${data.windowDays} días)*` : '';
+    lines.push(`📂 *Dónde llegó tu correo${windowNote}:*`);
     if (breakdown.length === 0) {
-        lines.push('• (no hay correo sin leer)');
+        lines.push('• (no hay correo en ese período)');
     } else {
         for (const { name, count } of breakdown) lines.push(`• ${name}: ${count}`);
+    }
+    if (data.olderCount > 0) {
+        lines.push('');
+        lines.push(
+            `📅 _Además hay ~${data.olderCount} correos anteriores a esos ${data.windowDays} días ` +
+                'que no incluí en el desglose de arriba._'
+        );
     }
     lines.push('');
 

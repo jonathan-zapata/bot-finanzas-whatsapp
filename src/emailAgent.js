@@ -187,7 +187,7 @@ async function loadMailbox(ctx, { forceRefresh = false } = {}) {
 }
 
 function buildRefreshMessage(data) {
-    const count = data.messages?.length ?? 0;
+    const count = (data.messages ?? []).filter((m) => !m.isRead).length;
     return (
         `🔄 Listo, actualicé los datos de tu casilla. Tenés *${count}* correos sin leer.\n` +
         'Pedime *email radiografía* para ver a dónde va tu correo, o *email resumen* para agruparlos por categoría.'
@@ -227,9 +227,11 @@ async function handleSummary(data, ctx) {
         return;
     }
 
-    // Inbox contents specifically — the mail the user actually sees.
+    // Inbox contents specifically, and only what's UNREAD — the mail the user
+    // actually still has to see. (The metadata pull now also carries recent read
+    // mail for the x-ray, so the read filter matters here.)
     const inboxId = data.inbox?.id;
-    const inboxMessages = (data.messages ?? []).filter((m) => m.parentFolderId === inboxId);
+    const inboxMessages = (data.messages ?? []).filter((m) => !m.isRead && m.parentFolderId === inboxId);
 
     const senders = collectSenders(inboxMessages);
     const assignments = await classifySenders(ai, { senders, categories: taxonomy }, model);

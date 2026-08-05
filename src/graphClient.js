@@ -59,18 +59,19 @@ export function createGraphClient({
     sleep = defaultSleep,
 }) {
     // A single GET with 429 + Retry-After backoff. Graph throttles per-mailbox,
-    // so this is the expected "slow down" signal, not an error.
-    async function graphGet(url, attempt = 0) {
+    // so this is the expected "slow down" signal, not an error. Extra headers
+    // (e.g. ConsistencyLevel for $count) can be passed per call.
+    async function graphGet(url, { attempt = 0, headers = {} } = {}) {
         const token = await getAccessToken();
         const response = await fetchImpl(url, {
             method: 'GET',
-            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...headers },
         });
 
         if (response.status === 429 && attempt < MAX_RETRIES) {
             const retryAfter = Number(response.headers?.get?.('retry-after')) || 2 ** attempt;
             await sleep(retryAfter * 1000);
-            return graphGet(url, attempt + 1);
+            return graphGet(url, { attempt: attempt + 1, headers });
         }
         if (!response.ok) {
             const text = typeof response.text === 'function' ? await response.text().catch(() => '') : '';
@@ -79,11 +80,14 @@ export function createGraphClient({
         return response.json();
     }
 
-    // The full unread set (across the mailbox), capped at maxMessages. Paginated
-    // via Graph's @odata.nextLink.
-    async function listUnreadMessages() {
+    // The set that feeds every analysis: all unread mail (so the summary sees the
+    // whole backlog the user hasn't read) UNION mail received within the recent
+    // window (so the x-ray shows where *recent* mail — read or unread — actually
+    // landed). One pull covers both needs; each action filters it. Capped at
+    // maxMessages, paginated via @odata.nextLink.
+    async function listUnreadOrRecentMessages(sinceIso) {
         const messages = [];
-        const filter = encodeURIComponent('isRead eq false');
+        const filter = encodeURIComponent(`isRead eq false or receivedDateTime ge ${sinceIso}`);
         let url = `${baseUrl}/me/messages?$filter=${filter}&$select=${SELECT_FIELDS}&$top=${PAGE_SIZE}`;
         while (url && messages.length < maxMessages) {
             const page = await graphGet(url);
@@ -94,6 +98,16 @@ export function createGraphClient({
             url = page['@odata.nextLink'] ?? null;
         }
         return messages;
+    }
+
+    // How many messages are older than the window (and thus not shown in the
+    // x-ray's recent breakdown) — powers the "there are ~N older emails"
+    // disclaimer. A $count query needs the eventual-consistency header.
+    async function countMessagesOlderThan(sinceIso) {
+        const filter = encodeURIComponent(`receivedDateTime lt ${sinceIso}`);
+        const url = `${baseUrl}/me/messages?$filter=${filter}&$count=true&$top=1&$select=id`;
+        const page = await graphGet(url, { headers: { ConsistencyLevel: 'eventual' } });
+        return page['@odata.count'] ?? 0;
     }
 
     // Every mail folder, walking child folders to arbitrary depth. Used to map a
@@ -127,5 +141,11 @@ export function createGraphClient({
         return page.value ?? [];
     }
 
-    return { listUnreadMessages, listMailFolders, getInboxFolder, listMessageRules };
+    return {
+        listUnreadOrRecentMessages,
+        countMessagesOlderThan,
+        listMailFolders,
+        getInboxFolder,
+        listMessageRules,
+    };
 }

@@ -15,6 +15,8 @@ function jsonResponse(body, { status = 200, headers = {} } = {}) {
 const getAccessToken = async () => 'tok';
 const noSleep = async () => {};
 
+const SINCE = '2026-07-22T00:00:00.000Z';
+
 test('message reads request metadata via $select and NEVER body/bodyPreview', async () => {
     let seenUrl;
     const client = createGraphClient({
@@ -24,11 +26,31 @@ test('message reads request metadata via $select and NEVER body/bodyPreview', as
             return jsonResponse({ value: [] });
         },
     });
-    await client.listUnreadMessages();
+    await client.listUnreadOrRecentMessages(SINCE);
 
     assert.match(seenUrl, /\$select=subject,receivedDateTime,isRead,hasAttachments,parentFolderId,from/);
     assert.doesNotMatch(seenUrl, /body/i, 'must never request message bodies');
-    assert.match(seenUrl, /isRead%20eq%20false/, 'pulls the unread set');
+    // Union: all unread OR received within the window.
+    assert.match(seenUrl, /isRead%20eq%20false%20or%20receivedDateTime%20ge/, 'unread OR recent');
+});
+
+test('countMessagesOlderThan sends the eventual-consistency header and returns @odata.count', async () => {
+    let seenHeaders;
+    let seenUrl;
+    const client = createGraphClient({
+        getAccessToken,
+        fetchImpl: async (url, opts) => {
+            seenUrl = url;
+            seenHeaders = opts.headers;
+            return jsonResponse({ '@odata.count': 42, value: [] });
+        },
+    });
+    const count = await client.countMessagesOlderThan(SINCE);
+
+    assert.equal(count, 42);
+    assert.match(seenUrl, /\$count=true/);
+    assert.match(seenUrl, /receivedDateTime%20lt/);
+    assert.equal(seenHeaders.ConsistencyLevel, 'eventual');
 });
 
 test('unread pull normalizes metadata and follows pagination', async () => {
@@ -45,7 +67,7 @@ test('unread pull normalizes metadata and follows pagination', async () => {
         getAccessToken,
         fetchImpl: async () => jsonResponse(calls++ === 0 ? page1 : page2),
     });
-    const messages = await client.listUnreadMessages();
+    const messages = await client.listUnreadOrRecentMessages(SINCE);
 
     assert.equal(messages.length, 2);
     assert.deepEqual(messages[0].from, { name: 'A', address: 'a@x.com' });
@@ -67,7 +89,7 @@ test('unread pull respects the safety ceiling (maxMessages)', async () => {
         maxMessages: 2,
         fetchImpl: async () => jsonResponse(page),
     });
-    const messages = await client.listUnreadMessages();
+    const messages = await client.listUnreadOrRecentMessages(SINCE);
     assert.equal(messages.length, 2, 'stops at the ceiling');
 });
 
@@ -82,7 +104,7 @@ test('429 is retried after Retry-After, then succeeds', async () => {
             return jsonResponse({ value: [] });
         },
     });
-    const messages = await client.listUnreadMessages();
+    const messages = await client.listUnreadOrRecentMessages(SINCE);
     assert.equal(messages.length, 0);
     assert.equal(calls, 2, 'retried once after the 429');
 });

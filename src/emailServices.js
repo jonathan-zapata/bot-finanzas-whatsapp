@@ -22,6 +22,10 @@ export function createEmailServices({
     secretManager,
     fetchImpl = fetch,
     cacheTtlMinutes = 120,
+    // The x-ray covers read + unread mail from the last N days (the summary
+    // still looks at unread only). Configurable; 14 days by default.
+    recentWindowDays = 14,
+    now = () => Date.now(),
     // Injectable seams (defaults are the real repos / clients).
     deps = {},
 }) {
@@ -46,14 +50,24 @@ export function createEmailServices({
         const accessToken = await auth.getAccessToken();
         const graph = makeGraphClient({ getAccessToken: async () => accessToken, fetchImpl });
 
+        const cutoffIso = new Date(now() - recentWindowDays * 24 * 60 * 60 * 1000).toISOString();
+
         const [messages, folders, inbox, rules] = await Promise.all([
-            graph.listUnreadMessages(),
+            graph.listUnreadOrRecentMessages(cutoffIso),
             graph.listMailFolders(),
             graph.getInboxFolder(),
             graph.listMessageRules(),
         ]);
 
-        const datos = { messages, folders, inbox, rules };
+        // Best-effort: the disclaimer is nice-to-have, not worth failing the pull.
+        let olderCount = null;
+        try {
+            olderCount = await graph.countMessagesOlderThan(cutoffIso);
+        } catch (error) {
+            console.warn('⚠️ Could not count older messages for the x-ray disclaimer:', error?.message);
+        }
+
+        const datos = { messages, folders, inbox, rules, cutoffIso, windowDays: recentWindowDays, olderCount };
         await saveCache(supabase, phone, datos);
         return { ...datos, fromCache: false };
     }

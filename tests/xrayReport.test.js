@@ -9,8 +9,8 @@ const folders = [
     { id: 'sales-id', displayName: 'Salesforce' },
 ];
 
-function msg(parentFolderId) {
-    return { parentFolderId, from: { name: 'x', address: 'x@y.com' }, subject: 's', isRead: false };
+function msg(parentFolderId, { isRead = false, receivedDateTime = '2026-08-01T10:00:00Z' } = {}) {
+    return { parentFolderId, from: { name: 'x', address: 'x@y.com' }, subject: 's', isRead, receivedDateTime };
 }
 
 test('folder breakdown counts by folder, sorted by count desc', () => {
@@ -87,9 +87,31 @@ test('formatXrayReport renders count, breakdown and rules; states it changed not
     assert.match(text, /\*LinkedIn\*/);
 });
 
+test('unread count is over unread mail, but the breakdown covers the recent window (read + unread)', () => {
+    const cutoffIso = '2026-07-25T00:00:00Z';
+    const text = formatXrayReport({
+        messages: [
+            msg('inbox-id', { isRead: false, receivedDateTime: '2026-08-01T00:00:00Z' }), // unread, recent
+            msg('linkedin-id', { isRead: true, receivedDateTime: '2026-07-30T00:00:00Z' }), // read, recent → in breakdown
+            msg('inbox-id', { isRead: false, receivedDateTime: '2026-06-01T00:00:00Z' }), // unread but OLD → not in breakdown
+        ],
+        folders,
+        inbox,
+        rules: [],
+        cutoffIso,
+        windowDays: 14,
+        olderCount: 120,
+    });
+    assert.match(text, /sin leer: \*2\*/, 'two unread total (recent + old)');
+    assert.match(text, /últimos 14 días/);
+    assert.match(text, /Bandeja de entrada: 1/, 'only the recent inbox message is in the breakdown');
+    assert.match(text, /LinkedIn: 1/, 'a READ recent message appears in the breakdown');
+    assert.match(text, /~120 correos anteriores/, 'older-mail disclaimer');
+});
+
 test('empty mailbox renders gracefully', () => {
     const text = formatXrayReport({ messages: [], folders, inbox, rules: [] });
     assert.match(text, /sin leer: \*0\*/);
-    assert.match(text, /no hay correo sin leer/);
+    assert.match(text, /no hay correo en ese período/);
     assert.match(text, /No encontré reglas/);
 });

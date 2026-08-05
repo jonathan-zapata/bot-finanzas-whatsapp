@@ -27,7 +27,11 @@ const whatsapp = createWhatsAppClient({ token: config.whatsappToken, phoneNumber
 // isn't configured yet — it only reaches for Secret Manager when an email
 // request actually needs the mailbox.
 const secretManager = createSecretManager({ projectId: config.gcpProjectId });
-const emailServices = createEmailServices({ config: config.microsoft, secretManager });
+const emailServices = createEmailServices({
+    config: config.microsoft,
+    secretManager,
+    recentWindowDays: config.emailRecentWindowDays,
+});
 
 // ==========================================
 // ROUTE 1: META VERIFICATION

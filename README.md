@@ -65,7 +65,7 @@ Message the bot starting with **`email`** followed by what you want:
 |---|---|
 | `email conectar` | Get a Microsoft consent link to connect your mailbox (read-only) |
 | `email dame un resumen` | Semantic inbox summary — who wrote you, grouped by category |
-| `email radiografía` | X-ray: where your unread mail lands by folder + what your rules do |
+| `email radiografía` | X-ray: where your recent mail (read + unread, last ~14 days) lands by folder + what your rules do, with a count of older mail |
 | `email recomendaciones` | Proposed folder structure + which rules hide mail vs. reduce noise |
 | `email configurar categorías` / `email reconstruir categorías` | Build/rebuild your category taxonomy (confirm once) |
 | `email actualizar` | Force a fresh pull, bypassing the ~2h cache |

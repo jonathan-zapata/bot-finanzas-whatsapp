@@ -56,4 +56,6 @@ export const config = {
         refreshTokenSecret: process.env.MS_REFRESH_TOKEN_SECRET || 'ms-refresh-token',
     },
     gcpProjectId: process.env.GCP_PROJECT_ID,
+    // Days of read+unread mail the x-ray covers (the summary stays unread-only).
+    emailRecentWindowDays: Number(process.env.EMAIL_XRAY_WINDOW_DAYS) || 14,
 };
