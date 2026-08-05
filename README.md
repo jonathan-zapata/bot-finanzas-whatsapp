@@ -1,6 +1,11 @@
 # bot-finanzas-whatsapp
 
-WhatsApp bot that logs your expenses automatically. Write to it in natural language (e.g. *"Pagué 2000 de Antel en efectivo"*) and the bot uses an LLM to extract the data, validates the result, and saves it to Supabase — replying on WhatsApp with a confirmation.
+WhatsApp bot with two agents behind a deterministic router:
+
+- **Expense agent** (default) — logs your expenses automatically. Write to it in natural language (e.g. *"Pagué 2000 de Antel en efectivo"*) and the bot uses an LLM to extract the data, validates the result, and saves it to Supabase — replying on WhatsApp with a confirmation.
+- **Email agent** — reach it with the `email …` prefix (e.g. *"email dame un resumen"*). It connects to a personal Microsoft (Hotmail/Outlook) mailbox **read-only** and answers questions about it: a semantic inbox summary, a folder/rule x-ray, folder/rule recommendations, and a confirmable category taxonomy. See [Email agent](#email-agent-read-only).
+
+A **Level-1 router** picks the agent by explicit prefix (never an LLM guess); an `email …` message goes to the email agent, everything else to the expense agent unchanged. Within the email agent, a **Level-2 LLM classifier** maps the request to a closed set of read-only actions.
 
 ## How it works
 
@@ -20,18 +25,55 @@ Every message is processed idempotently by `message_id`: if Meta retries deliver
 ## Project structure
 
 ```
-index.js                       Express server: webhook routes (verification + reception)
+index.js                       Express server: webhook routes + Microsoft OAuth callback
 src/
   config.js                    Loads and validates environment variables
   whatsappClient.js            Sends messages and verifies Meta's signature
-  aiExtractor.js                LLM prompt + validation of the extracted expense (Zod)
-  paymentsRepo.js                Access to the `pagos` table (save, find duplicates, idempotency)
-  pendingConfirmationsRepo.js      Access to the `confirmaciones_pendientes` table
-  responseParser.js                Interprets the user's yes/no answers
-  messageHandler.js                 Orchestrates the full flow of an incoming message
-supabase/migrations/            SQL database migrations
-tests/                           Unit tests (node --test)
+  messageHandler.js            Level-1 router: idempotency → pending → prefix dispatch
+  responseParser.js            Interprets the user's yes/no answers
+
+  # Expense agent (default)
+  expenseAgent.js              Expense flow as an agent (extract → dedupe → save)
+  aiExtractor.js               LLM prompt + Zod validation of the extracted expense
+  paymentsRepo.js              Access to the `pagos` table (save, dedupe, idempotency)
+  pendingConfirmationsRepo.js  Shared pending-question store (with a `dominio` discriminator)
+
+  # Email agent (email … prefix, read-only)
+  emailAgent.js                Orchestrates: classify → connect/gate → run action → reply
+  emailIntentClassifier.js     Level-2 LLM classifier over a closed, Zod-validated enum
+  emailServices.js             Composes auth + Graph + cache + taxonomy into one bundle
+  microsoftAuth.js             OAuth: consent URL, code exchange, rotating-token refresh
+  secretManager.js             GCP Secret Manager wrapper (the rotating refresh token)
+  graphClient.js               Microsoft Graph reads (metadata-only $select; 429 backoff)
+  metadataCacheRepo.js         ~2h metadata cache (`email_metadata_cache`)
+  taxonomyBuilder.js           Proposes a category taxonomy from folders + rule names
+  taxonomyRepo.js              Confirmed taxonomy store (`email_taxonomia`)
+  xrayReport.js                Deterministic folder/rule x-ray
+  summaryClassifier.js         Sender→category classification (metadata only)
+  summaryReport.js             Semantic inbox summary rendering
+  recommendationsReport.js     Folder/rule recommendations (informational)
+supabase/migrations/           SQL database migrations
+docs/                          Email agent deploy + Secret Manager migration guides
+tests/                         Unit tests (node --test)
 ```
+
+## Email agent (read-only)
+
+Message the bot starting with **`email`** followed by what you want:
+
+| Say | Action |
+|---|---|
+| `email conectar` | Get a Microsoft consent link to connect your mailbox (read-only) |
+| `email dame un resumen` | Semantic inbox summary — who wrote you, grouped by category |
+| `email radiografía` | X-ray: where your unread mail lands by folder + what your rules do |
+| `email recomendaciones` | Proposed folder structure + which rules hide mail vs. reduce noise |
+| `email configurar categorías` / `email reconstruir categorías` | Build/rebuild your category taxonomy (confirm once) |
+| `email actualizar` | Force a fresh pull, bypassing the ~2h cache |
+| `email ayuda` | List what the email agent can do |
+
+If your request is ambiguous, the bot replies with a short numbered menu; answer with the number. All actions are **read-only**: phase 1 requests only `Mail.Read` + `MailboxSettings.Read`, so Microsoft itself enforces that nothing can be modified. Only email **metadata** (sender, subject, dates, flags, folder) is ever read — never message bodies.
+
+Setup requires an Azure app registration and GCP Secret Manager for the rotating refresh token — see [`docs/email-agent-deploy.md`](docs/email-agent-deploy.md). Migrating the bot's static secrets to Secret Manager is documented in [`docs/secret-manager-migration.md`](docs/secret-manager-migration.md).
 
 ## Requirements
 
