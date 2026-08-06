@@ -6,6 +6,7 @@ import { createWhatsAppClient, verifyWebhookSignature } from './src/whatsappClie
 import { handleIncomingMessage } from './src/messageHandler.js';
 import { createSecretManager } from './src/secretManager.js';
 import { createEmailServices } from './src/emailServices.js';
+import { attachRateLimitLogging } from './src/llmRateLimitLog.js';
 
 const app = express();
 // We keep the raw body (rawBody) because Meta's signature verification is
@@ -19,7 +20,7 @@ app.use(
 );
 
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
-const ai = new OpenAI({ apiKey: config.llmApiKey, baseURL: config.llmBaseUrl });
+const ai = attachRateLimitLogging(new OpenAI({ apiKey: config.llmApiKey, baseURL: config.llmBaseUrl }));
 const whatsapp = createWhatsAppClient({ token: config.whatsappToken, phoneNumberId: config.phoneNumberId });
 
 // Email-agent services. The refresh token lives in Secret Manager (runtime
