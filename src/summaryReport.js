@@ -64,12 +64,13 @@ export function collectActionItems(messages, { limit = 5 } = {}) {
         .map((m) => ({ subject: m.subject || '(sin asunto)', sender: m.from?.name || m.from?.address || 'desconocido' }));
 }
 
-export function formatSummaryReport({ messages, taxonomy, assignments }) {
+export function formatSummaryReport({ messages, taxonomy, assignments, windowDays }) {
     const counts = buildCategoryCounts({ messages, taxonomy, assignments });
     const actionItems = collectActionItems(messages);
 
+    const windowNote = windowDays ? ` (últimos ${windowDays} días)` : '';
     const lines = ['🧾 *Resumen de tu bandeja* (solo lectura)', ''];
-    lines.push(`📥 Sin leer en la bandeja: *${(messages ?? []).length}*`);
+    lines.push(`📥 Sin leer en la bandeja${windowNote}: *${(messages ?? []).length}*`);
     lines.push('');
 
     lines.push('*Quién te escribió, por categoría:*');

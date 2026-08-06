@@ -26,12 +26,33 @@ test('message reads request metadata via $select and NEVER body/bodyPreview', as
             return jsonResponse({ value: [] });
         },
     });
-    await client.listUnreadOrRecentMessages(SINCE);
+    await client.listRecentMessages(SINCE);
 
     assert.match(seenUrl, /\$select=subject,receivedDateTime,isRead,hasAttachments,parentFolderId,from/);
     assert.doesNotMatch(seenUrl, /body/i, 'must never request message bodies');
-    // Union: all unread OR received within the window.
-    assert.match(seenUrl, /isRead%20eq%20false%20or%20receivedDateTime%20ge/, 'unread OR recent');
+    // Recent window only, newest first — no longer pulls the whole unread backlog.
+    assert.match(seenUrl, /receivedDateTime%20ge/, 'recent-window filter');
+    assert.doesNotMatch(seenUrl, /isRead%20eq%20false%20or/, 'does not pull the whole unread backlog');
+    assert.match(seenUrl, /\$orderby=receivedDateTime%20desc/, 'newest first so the cap drops the oldest');
+});
+
+test('countUnread returns the mailbox-wide unread total via $count + eventual header', async () => {
+    let seenUrl;
+    let seenHeaders;
+    const client = createGraphClient({
+        getAccessToken,
+        fetchImpl: async (url, opts) => {
+            seenUrl = url;
+            seenHeaders = opts.headers;
+            return jsonResponse({ '@odata.count': 1234, value: [] });
+        },
+    });
+    const n = await client.countUnread();
+
+    assert.equal(n, 1234);
+    assert.match(seenUrl, /\$count=true/);
+    assert.match(seenUrl, /isRead%20eq%20false/);
+    assert.equal(seenHeaders.ConsistencyLevel, 'eventual');
 });
 
 test('countMessagesOlderThan sends the eventual-consistency header and returns @odata.count', async () => {
@@ -67,7 +88,7 @@ test('unread pull normalizes metadata and follows pagination', async () => {
         getAccessToken,
         fetchImpl: async () => jsonResponse(calls++ === 0 ? page1 : page2),
     });
-    const messages = await client.listUnreadOrRecentMessages(SINCE);
+    const messages = await client.listRecentMessages(SINCE);
 
     assert.equal(messages.length, 2);
     assert.deepEqual(messages[0].from, { name: 'A', address: 'a@x.com' });
@@ -89,7 +110,7 @@ test('unread pull respects the safety ceiling (maxMessages)', async () => {
         maxMessages: 2,
         fetchImpl: async () => jsonResponse(page),
     });
-    const messages = await client.listUnreadOrRecentMessages(SINCE);
+    const messages = await client.listRecentMessages(SINCE);
     assert.equal(messages.length, 2, 'stops at the ceiling');
 });
 
@@ -104,7 +125,7 @@ test('429 is retried after Retry-After, then succeeds', async () => {
             return jsonResponse({ value: [] });
         },
     });
-    const messages = await client.listUnreadOrRecentMessages(SINCE);
+    const messages = await client.listRecentMessages(SINCE);
     assert.equal(messages.length, 0);
     assert.equal(calls, 2, 'retried once after the 429');
 });

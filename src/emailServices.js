@@ -22,9 +22,11 @@ export function createEmailServices({
     secretManager,
     fetchImpl = fetch,
     cacheTtlMinutes = 120,
-    // The x-ray covers read + unread mail from the last N days (the summary
-    // still looks at unread only). Configurable; 14 days by default.
-    recentWindowDays = 14,
+    // Both the summary and the x-ray read the last N days of mail (read +
+    // unread); the summary then narrows to UNREAD in the Inbox. The mailbox-wide
+    // "total unread" headline comes from a separate $count, so it's exact
+    // regardless of this window or the pull ceiling. Configurable; 30 days.
+    recentWindowDays = 30,
     now = () => Date.now(),
     // Injectable seams (defaults are the real repos / clients).
     deps = {},
@@ -52,11 +54,17 @@ export function createEmailServices({
 
         const cutoffIso = new Date(now() - recentWindowDays * 24 * 60 * 60 * 1000).toISOString();
 
-        const [messages, folders, inbox, rules] = await Promise.all([
-            graph.listUnreadOrRecentMessages(cutoffIso),
+        const [messages, folders, inbox, rules, unreadTotal] = await Promise.all([
+            graph.listRecentMessages(cutoffIso),
             graph.listMailFolders(),
             graph.getInboxFolder(),
             graph.listMessageRules(),
+            // Best-effort: the exact unread headline is nice-to-have; on failure
+            // the x-ray falls back to counting the fetched set.
+            graph.countUnread().catch((error) => {
+                console.warn('⚠️ Could not count total unread mail:', error?.message);
+                return null;
+            }),
         ]);
 
         // Best-effort: the disclaimer is nice-to-have, not worth failing the pull.
@@ -67,7 +75,7 @@ export function createEmailServices({
             console.warn('⚠️ Could not count older messages for the x-ray disclaimer:', error?.message);
         }
 
-        const datos = { messages, folders, inbox, rules, cutoffIso, windowDays: recentWindowDays, olderCount };
+        const datos = { messages, folders, inbox, rules, cutoffIso, windowDays: recentWindowDays, olderCount, unreadTotal };
         await saveCache(supabase, phone, datos);
         return { ...datos, fromCache: false };
     }

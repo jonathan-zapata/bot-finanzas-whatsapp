@@ -35,7 +35,8 @@ function fakeGraphFactory() {
     const makeGraphClient = () => {
         built += 1;
         return {
-            listUnreadOrRecentMessages: async () => fakeMailbox.messages,
+            listRecentMessages: async () => fakeMailbox.messages,
+            countUnread: async () => 1234,
             countMessagesOlderThan: async () => 7,
             listMailFolders: async () => fakeMailbox.folders,
             getInboxFolder: async () => fakeMailbox.inbox,
@@ -89,10 +90,11 @@ test('on a cache miss, pulls from Graph, stores metadata, returns fromCache:fals
     // Only metadata keys are cached — no bodies anywhere.
     assert.deepEqual(
         Object.keys(cache.saves[0]).sort(),
-        ['cutoffIso', 'folders', 'inbox', 'messages', 'olderCount', 'rules', 'windowDays']
+        ['cutoffIso', 'folders', 'inbox', 'messages', 'olderCount', 'rules', 'unreadTotal', 'windowDays']
     );
     assert.equal(cache.saves[0].olderCount, 7, 'older-mail count captured for the disclaimer');
-    assert.equal(cache.saves[0].windowDays, 14);
+    assert.equal(cache.saves[0].unreadTotal, 1234, 'mailbox-wide unread total captured');
+    assert.equal(cache.saves[0].windowDays, 30);
     assert.doesNotMatch(JSON.stringify(cache.saves[0]), /"body"/i);
 });
 

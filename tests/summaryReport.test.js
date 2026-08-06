@@ -54,3 +54,8 @@ test('formatSummaryReport shows Inbox count, category grouping and action highli
     assert.match(text, /\*Gobierno\*: 1/);
     assert.match(text, /Trámite/);
 });
+
+test('formatSummaryReport notes the recency window when provided', () => {
+    const text = formatSummaryReport({ messages: [], taxonomy, assignments: [], windowDays: 30 });
+    assert.match(text, /Sin leer en la bandeja \(últimos 30 días\): \*0\*/);
+});

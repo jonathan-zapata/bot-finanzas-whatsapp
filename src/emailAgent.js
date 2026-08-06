@@ -228,8 +228,9 @@ async function handleSummary(data, ctx) {
     }
 
     // Inbox contents specifically, and only what's UNREAD — the mail the user
-    // actually still has to see. (The metadata pull now also carries recent read
-    // mail for the x-ray, so the read filter matters here.)
+    // actually still has to see. The metadata pull is already scoped to the
+    // recent window (read + unread), so this yields recent unread Inbox mail;
+    // the old backlog filed into subfolders is intentionally excluded.
     const inboxId = data.inbox?.id;
     const inboxMessages = (data.messages ?? []).filter((m) => !m.isRead && m.parentFolderId === inboxId);
 
@@ -238,7 +239,7 @@ async function handleSummary(data, ctx) {
 
     await whatsapp.sendMessage(
         userPhone,
-        formatSummaryReport({ messages: inboxMessages, taxonomy, assignments })
+        formatSummaryReport({ messages: inboxMessages, taxonomy, assignments, windowDays: data.windowDays })
     );
 }
 

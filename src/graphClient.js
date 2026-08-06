@@ -80,15 +80,19 @@ export function createGraphClient({
         return response.json();
     }
 
-    // The set that feeds every analysis: all unread mail (so the summary sees the
-    // whole backlog the user hasn't read) UNION mail received within the recent
-    // window (so the x-ray shows where *recent* mail — read or unread — actually
-    // landed). One pull covers both needs; each action filters it. Capped at
-    // maxMessages, paginated via @odata.nextLink.
-    async function listUnreadOrRecentMessages(sinceIso) {
+    // The recent-window message set (read + unread) that feeds both the summary
+    // and the x-ray breakdown: everything received on or after the cutoff,
+    // ordered NEWEST FIRST so the maxMessages ceiling only ever drops the oldest
+    // mail in the window — never the recent mail the reports are about. This
+    // matters for a mailbox whose rules file everything into subfolders: it can
+    // carry a huge unread backlog, and without date ordering that backlog fills
+    // the cap and crowds out the recent Inbox mail (which is what left the
+    // summary showing 0). `$orderby` is on the same property as `$filter`, so
+    // Graph accepts the combination. Capped at maxMessages, paginated.
+    async function listRecentMessages(sinceIso) {
         const messages = [];
-        const filter = encodeURIComponent(`isRead eq false or receivedDateTime ge ${sinceIso}`);
-        let url = `${baseUrl}/me/messages?$filter=${filter}&$select=${SELECT_FIELDS}&$top=${PAGE_SIZE}`;
+        const filter = encodeURIComponent(`receivedDateTime ge ${sinceIso}`);
+        let url = `${baseUrl}/me/messages?$filter=${filter}&$orderby=receivedDateTime%20desc&$select=${SELECT_FIELDS}&$top=${PAGE_SIZE}`;
         while (url && messages.length < maxMessages) {
             const page = await graphGet(url);
             for (const m of page.value ?? []) {
@@ -98,6 +102,16 @@ export function createGraphClient({
             url = page['@odata.nextLink'] ?? null;
         }
         return messages;
+    }
+
+    // Mailbox-wide unread total via a cheap $count — NOT by pulling the messages
+    // — so the "you have N unread" headline is exact even when N is far larger
+    // than the message-pull ceiling. A $count query needs the eventual header.
+    async function countUnread() {
+        const filter = encodeURIComponent('isRead eq false');
+        const url = `${baseUrl}/me/messages?$filter=${filter}&$count=true&$top=1&$select=id`;
+        const page = await graphGet(url, { headers: { ConsistencyLevel: 'eventual' } });
+        return page['@odata.count'] ?? 0;
     }
 
     // How many messages are older than the window (and thus not shown in the
@@ -142,7 +156,8 @@ export function createGraphClient({
     }
 
     return {
-        listUnreadOrRecentMessages,
+        listRecentMessages,
+        countUnread,
         countMessagesOlderThan,
         listMailFolders,
         getInboxFolder,

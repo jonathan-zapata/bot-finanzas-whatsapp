@@ -87,7 +87,10 @@ function recentMessages(data) {
 // Renders the full x-ray as a WhatsApp message.
 export function formatXrayReport(data) {
     const messages = data.messages ?? [];
-    const unreadCount = messages.filter((m) => !m.isRead).length;
+    // Exact mailbox-wide total from the $count query when present; fall back to
+    // counting the fetched set for the older cache shape (pre-unreadTotal) and
+    // for unit tests that pass messages directly.
+    const unreadCount = data.unreadTotal ?? messages.filter((m) => !m.isRead).length;
     const recent = recentMessages(data);
     const breakdown = buildFolderBreakdown({ messages: recent, folders: data.folders, inbox: data.inbox });
     const rules = buildRulesReport(data);

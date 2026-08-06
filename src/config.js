@@ -57,5 +57,5 @@ export const config = {
     },
     gcpProjectId: process.env.GCP_PROJECT_ID,
     // Days of read+unread mail the x-ray covers (the summary stays unread-only).
-    emailRecentWindowDays: Number(process.env.EMAIL_XRAY_WINDOW_DAYS) || 14,
+    emailRecentWindowDays: Number(process.env.EMAIL_XRAY_WINDOW_DAYS) || 30,
 };

@@ -87,26 +87,37 @@ test('formatXrayReport renders count, breakdown and rules; states it changed not
     assert.match(text, /\*LinkedIn\*/);
 });
 
-test('unread count is over unread mail, but the breakdown covers the recent window (read + unread)', () => {
+test('unread count is the exact mailbox-wide total; breakdown covers the recent window (read + unread)', () => {
     const cutoffIso = '2026-07-25T00:00:00Z';
     const text = formatXrayReport({
+        // Messages are already scoped to the recent window by the fetch.
         messages: [
             msg('inbox-id', { isRead: false, receivedDateTime: '2026-08-01T00:00:00Z' }), // unread, recent
             msg('linkedin-id', { isRead: true, receivedDateTime: '2026-07-30T00:00:00Z' }), // read, recent → in breakdown
-            msg('inbox-id', { isRead: false, receivedDateTime: '2026-06-01T00:00:00Z' }), // unread but OLD → not in breakdown
         ],
         folders,
         inbox,
         rules: [],
         cutoffIso,
-        windowDays: 14,
+        windowDays: 30,
         olderCount: 120,
+        unreadTotal: 1234, // exact total from the $count, independent of the fetched set
     });
-    assert.match(text, /sin leer: \*2\*/, 'two unread total (recent + old)');
-    assert.match(text, /últimos 14 días/);
-    assert.match(text, /Bandeja de entrada: 1/, 'only the recent inbox message is in the breakdown');
+    assert.match(text, /sin leer: \*1234\*/, 'exact mailbox-wide unread total, not the fetched-set count');
+    assert.match(text, /últimos 30 días/);
+    assert.match(text, /Bandeja de entrada: 1/, 'the recent inbox message is in the breakdown');
     assert.match(text, /LinkedIn: 1/, 'a READ recent message appears in the breakdown');
     assert.match(text, /~120 correos anteriores/, 'older-mail disclaimer');
+});
+
+test('unread count falls back to counting the fetched set when unreadTotal is absent (old cache shape)', () => {
+    const text = formatXrayReport({
+        messages: [msg('inbox-id', { isRead: false }), msg('inbox-id', { isRead: true })],
+        folders,
+        inbox,
+        rules: [],
+    });
+    assert.match(text, /sin leer: \*1\*/, 'counts the one unread in the fetched set');
 });
 
 test('empty mailbox renders gracefully', () => {
