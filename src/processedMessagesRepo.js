@@ -1,4 +1,4 @@
-const TABLE = 'mensajes_procesados';
+const TABLE = 'processed_messages';
 const UNIQUE_VIOLATION_CODE = '23505';
 
 // Domain-agnostic idempotency: records every WhatsApp message the bot has fully
@@ -28,7 +28,7 @@ export async function wasProcessed(supabase, messageId) {
 // throwing here would make the webhook 500 and Meta retry an already-answered
 // message (a duplicate reply), which is worse than a rare un-recorded id.
 export async function markProcessed(supabase, messageId, phone) {
-    const { error } = await supabase.from(TABLE).insert([{ message_id: messageId, telefono: phone }]);
+    const { error } = await supabase.from(TABLE).insert([{ message_id: messageId, phone }]);
     if (error) {
         // A concurrent retry that got there first is expected, not an error.
         if (error.code === UNIQUE_VIOLATION_CODE) return;

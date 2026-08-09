@@ -40,26 +40,51 @@ export function formatRateLimitLog(headers) {
     );
 }
 
-// Wraps the OpenAI-SDK client so each chat.completions.create call also logs its
-// rate-limit headers. Uses the SDK's `.withResponse()` to reach the raw HTTP
-// response, then returns just the completion so every existing call site keeps
-// working unchanged.
-export function attachRateLimitLogging(client, log = console.log) {
+// Wraps the OpenAI-SDK client so each chat.completions.create call also (a) logs
+// its rate-limit headers and (b) reports its token usage for cost tracking. Uses
+// the SDK's `.withResponse()` to reach both the raw HTTP response (for headers)
+// and the parsed completion (for `usage`), then returns just the completion so
+// every existing call site keeps working unchanged.
+//
+// Options (a bare function is still accepted as the log sink, for backward
+// compatibility with the original single-arg logging usage):
+//   - log:     where rate-limit one-liners go (default console.log).
+//   - onUsage: optional async ({ agent, model, usage }) => void, called after
+//              each completion that carried a usage payload. `agent` comes from
+//              the caller's out-of-band `_agentTag` param (see below). It's
+//              awaited so the record lands before a serverless host throttles the
+//              CPU on response; any error it throws is swallowed.
+//
+// `_agentTag` is our own attribution field: callers add it to the create params
+// to say which agent made the call, and it's stripped here so it never reaches
+// the provider's API.
+export function attachRateLimitLogging(client, options = console.log) {
+    const { log = console.log, onUsage } = typeof options === 'function' ? { log: options } : options;
+
     const completions = client?.chat?.completions;
     if (!completions || typeof completions.create !== 'function') return client;
 
     const original = completions.create.bind(completions);
-    completions.create = (params, options) =>
-        original(params, options)
+    completions.create = (params, requestOptions) => {
+        const { _agentTag, ...body } = params ?? {};
+        return original(body, requestOptions)
             .withResponse()
-            .then(({ data, response }) => {
+            .then(async ({ data, response }) => {
                 try {
                     const line = formatRateLimitLog(response?.headers);
                     if (line) log(line);
                 } catch {
                     // Never let logging break an LLM call.
                 }
+                if (onUsage && data?.usage) {
+                    try {
+                        await onUsage({ agent: _agentTag, model: data.model, usage: data.usage });
+                    } catch {
+                        // Usage recording is best-effort; never let it break the call.
+                    }
+                }
                 return data;
             });
+    };
     return client;
 }

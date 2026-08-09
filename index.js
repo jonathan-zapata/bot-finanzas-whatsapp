@@ -7,6 +7,7 @@ import { handleIncomingMessage } from './src/messageHandler.js';
 import { createSecretManager } from './src/secretManager.js';
 import { createEmailServices } from './src/emailServices.js';
 import { attachRateLimitLogging } from './src/llmRateLimitLog.js';
+import { recordUsage } from './src/llmUsageRepo.js';
 
 const app = express();
 // We keep the raw body (rawBody) because Meta's signature verification is
@@ -20,7 +21,12 @@ app.use(
 );
 
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
-const ai = attachRateLimitLogging(new OpenAI({ apiKey: config.llmApiKey, baseURL: config.llmBaseUrl }));
+// The wrapper logs Groq's rate-limit headers and records each call's token
+// usage + estimated cost into `uso_llm` (per agent), which the `email costos`
+// report reads. Usage recording is best-effort — it never breaks an LLM call.
+const ai = attachRateLimitLogging(new OpenAI({ apiKey: config.llmApiKey, baseURL: config.llmBaseUrl }), {
+    onUsage: (entry) => recordUsage(supabase, entry),
+});
 const whatsapp = createWhatsAppClient({ token: config.whatsappToken, phoneNumberId: config.phoneNumberId });
 
 // Email-agent services. The refresh token lives in Secret Manager (runtime

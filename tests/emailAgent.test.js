@@ -378,6 +378,28 @@ test('recommendations → one-shot informational report; no mailbox mutation cal
     assert.equal(saveTaxonomyCalls, 0, 'recommendations must not persist anything');
 });
 
+test('costs action → renders the per-agent usage report (no mailbox, no LLM needed)', async () => {
+    const summary = {
+        byAgent: [
+            { agent: 'expense', calls: 2, tokensIn: 900, tokensOut: 100, costUsd: 0.0005 },
+            { agent: 'email', calls: 1, tokensIn: 1000, tokensOut: 200, costUsd: 0.001 },
+        ],
+        total: { calls: 3, tokensIn: 1900, tokensOut: 300, costUsd: 0.0015 },
+    };
+    const deps = {
+        classifyEmailIntent: async () => 'costs',
+        getUsageSummary: async () => summary,
+    };
+    // No connection configured: costs must still work (it never touches the mailbox).
+    const whatsapp = await handle({ deps, remainder: 'cuánto llevo gastado', emailServices: fakeEmailServices({ connected: false }) });
+
+    assert.match(whatsapp.last(), /Costos de la API/);
+    assert.match(whatsapp.last(), /Finanzas/);
+    assert.match(whatsapp.last(), /Email/);
+    assert.match(whatsapp.last(), /Total/);
+    assert.doesNotMatch(whatsapp.last(), /conectaste tu casilla/, 'costs never gates on a connection');
+});
+
 test('an out-of-range number re-asks (does not run a wrong action)', async () => {
     const pending = new Map([
         [

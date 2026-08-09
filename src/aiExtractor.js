@@ -102,6 +102,9 @@ export async function extractExpense(ai, userText, model = 'llama-3.3-70b-versat
     const completion = await ai.chat.completions.create({
         messages: [{ role: 'user', content: prompt }],
         model,
+        // Attribution for the usage/cost ledger (matches the expense agent's
+        // domain). Stripped by the client wrapper before the request is sent.
+        _agentTag: 'expense',
         response_format: { type: 'json_object' },
         // Structured extraction, not creative writing: we want the model to
         // always pick its single most likely token, not sample from the

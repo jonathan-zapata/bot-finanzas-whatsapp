@@ -16,6 +16,7 @@ export const EMAIL_ACTIONS = [
     'setup_categories',
     'refresh',
     'connect',
+    'costs',
     'help',
     'unclear',
 ];
@@ -37,6 +38,7 @@ Elegí UNA sola acción de esta lista cerrada según lo que pide:
 - "setup_categories": quiere configurar, armar o reconstruir sus categorías.
 - "refresh": quiere actualizar / recargar los datos (traer correo nuevo).
 - "connect": quiere conectar, vincular o dar acceso a su cuenta de Microsoft/Outlook/Hotmail.
+- "costs": quiere saber el costo, gasto o consumo de la API / de los agentes / cuánto se lleva gastado.
 - "help": pregunta qué podés hacer, pide ayuda o la lista de funciones.
 - "unclear": no está claro cuál de las acciones anteriores quiere, o pide algo fuera de esta lista.
 
@@ -52,6 +54,9 @@ export async function classifyEmailIntent(ai, userText, model) {
         const completion = await ai.chat.completions.create({
             messages: [{ role: 'user', content: buildIntentPrompt(userText) }],
             model,
+            // Attribution for the usage/cost ledger (email agent's domain).
+            // Stripped by the client wrapper before the request is sent.
+            _agentTag: 'email',
             response_format: { type: 'json_object' },
             // Classification, not creative writing: greedy decoding for stable,
             // reproducible routing (same rationale as the expense extractor).
