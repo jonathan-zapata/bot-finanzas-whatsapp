@@ -65,7 +65,7 @@ function makeSpyDeps(state = {}, { emailAction = 'help', expenseExtraction = { i
             },
             // Shared pending store
             savePending: async (_s, { phone, payload, reason, domain }) => {
-                pending.set(phone, { telefono: phone, payload, motivo: reason, dominio: domain });
+                pending.set(phone, { phone, payload, reason, domain });
             },
             deletePending: async (_s, phone) => {
                 pending.delete(phone);
@@ -165,10 +165,10 @@ test('pending reply is routed to the email agent when the email domain asked', a
         [
             PHONE,
             {
-                telefono: PHONE,
+                phone: PHONE,
                 payload: { type: 'disambiguation', options: ['summary', 'xray'] },
-                motivo: 'email_disambiguation',
-                dominio: 'email',
+                reason: 'email_disambiguation',
+                domain: 'email',
             },
         ],
     ]);
@@ -182,7 +182,7 @@ test('pending reply is routed to the email agent when the email domain asked', a
 
 test('pending reply with no/expense domain still goes to the expense agent', async () => {
     const pending = new Map([
-        [PHONE, { telefono: PHONE, payload: { messageId: 'orig', data: baseData }, motivo: 'duplicate_same_date' }],
+        [PHONE, { phone: PHONE, payload: { messageId: 'orig', data: baseData }, reason: 'duplicate_same_date' }],
     ]);
     const env = makeSpyDeps({ pending });
     const whatsapp = await invoke({ deps: env.deps, text: 'sí, dale' });

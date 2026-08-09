@@ -84,9 +84,9 @@ Setup requires an Azure app registration and GCP Secret Manager for the rotating
 
 ## LLM cost tracking
 
-Every LLM (Groq) call is metered. The client wrapper (`src/llmRateLimitLog.js`) reads each completion's `usage`, computes a USD cost from the model's price (`src/llmPricing.js`), and writes one row per call to the `uso_llm` table — tagged by the agent that made it (`expense` or `email`). Recording is **best-effort**: a failure there is logged and swallowed, never breaking the reply.
+Every LLM (Groq) call is metered. The client wrapper (`src/llmRateLimitLog.js`) reads each completion's `usage`, computes a USD cost from the model's price (`src/llmPricing.js`), and writes one row per call to the `llm_usage` table — tagged by the agent that made it (`expense` or `email`). Recording is **best-effort**: a failure there is logged and swallowed, never breaking the reply.
 
-Ask the bot **`email costos`** for the accumulated spend, broken down by agent. The figure is an *estimate* from Groq's published prices; while you're on the free tier the amount actually billed is **US$0** (the report says so). Prices live in `src/llmPricing.js` — add a model there to track it; an unpriced model is recorded at $0 rather than guessed. Run the `uso_llm` migration in `supabase/migrations/` before relying on the report.
+Ask the bot **`email costos`** for the accumulated spend, broken down by agent. The figure is an *estimate* from Groq's published prices; while you're on the free tier the amount actually billed is **US$0** (the report says so). Prices live in `src/llmPricing.js` — add a model there to track it; an unpriced model is recorded at $0 rather than guessed. Run the `llm_usage` migration in `supabase/migrations/` before relying on the report.
 
 ## Requirements
 
@@ -120,9 +120,11 @@ Ask the bot **`email costos`** for the accumulated spend, broken down by agent. 
    | `SUPABASE_URL` / `SUPABASE_KEY` | Supabase project credentials |
    | `VENTANA_CONFIRMACION_MIN` | Optional (default `30`). Minutes a duplicate-confirmation question stays pending before it expires |
 
-3. Run the migrations in `supabase/migrations/` on your Supabase project. Besides what the migrations create, you need a `pagos` table with (at least) these columns: `telefono`, `message_id` (unique, for idempotency), `servicio`, `monto`, `divisa`, `metodo_pago`, `cuotas`, `categoria`, `fecha_gasto`.
+3. Run the migrations in `supabase/migrations/` on your Supabase project. Besides what the migrations create, you need a `payments` table with (at least) these columns: `phone`, `message_id` (unique, for idempotency), `service`, `amount`, `currency`, `payment_method`, `installments`, `category`, `expense_date`.
 
-   Table, column, and enum values stay in Spanish on purpose: they're the live database schema and the LLM's expected output contract, shared with the bot's Spanish-speaking (Uruguayan) users — see [`src/aiExtractor.js`](src/aiExtractor.js) for the field definitions.
+   **Naming convention:** table and column names are in **English** — the project's convention going forward. What stays in Spanish is *content*, not schema: the enum **values** stored in columns (e.g. `credito`, `Vivienda`, `UYU`), the LLM's JSON output contract (its keys mirror the domain object in [`src/aiExtractor.js`](src/aiExtractor.js), mapped to the English columns in [`src/paymentsRepo.js`](src/paymentsRepo.js)), and every user-facing WhatsApp string — all for the bot's Spanish-speaking (Uruguayan) users.
+
+   If you're upgrading an existing deployment whose schema is still in Spanish, run the idempotent [`supabase/migrations/20260809140000_rename_schema_to_english.sql`](supabase/migrations/20260809140000_rename_schema_to_english.sql) once — it renames every table and column in place (data preserved) and is safe to re-run.
 
 ## Local usage
 

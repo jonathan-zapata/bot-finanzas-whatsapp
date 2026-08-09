@@ -41,11 +41,11 @@ test('recordUsage inserts a row with computed cost and agent tag', async () => {
 
     assert.equal(supabase.inserted.length, 1);
     const row = supabase.inserted[0];
-    assert.equal(row.agente, 'expense');
-    assert.equal(row.modelo, 'llama-3.3-70b-versatile');
-    assert.equal(row.tokens_entrada, 500);
-    assert.equal(row.tokens_salida, 60);
-    assert.ok(row.costo_usd > 0);
+    assert.equal(row.agent, 'expense');
+    assert.equal(row.model, 'llama-3.3-70b-versatile');
+    assert.equal(row.tokens_in, 500);
+    assert.equal(row.tokens_out, 60);
+    assert.ok(row.cost_usd > 0);
 });
 
 test('recordUsage is a no-op without a usage payload (e.g. faked clients)', async () => {
@@ -63,14 +63,14 @@ test('recordUsage never throws on an insert error', async () => {
 test('unknown agent defaults to "unknown"', async () => {
     const supabase = fakeSupabase();
     await recordUsage(supabase, { model: 'llama-3.3-70b-versatile', usage: { prompt_tokens: 1, completion_tokens: 1 } });
-    assert.equal(supabase.inserted[0].agente, 'unknown');
+    assert.equal(supabase.inserted[0].agent, 'unknown');
 });
 
 test('getUsageSummary aggregates per agent plus a grand total', async () => {
     const rows = [
-        { agente: 'expense', tokens_entrada: 500, tokens_salida: 60, costo_usd: 0.0003 },
-        { agente: 'expense', tokens_entrada: 400, tokens_salida: 40, costo_usd: 0.0002 },
-        { agente: 'email', tokens_entrada: 1000, tokens_salida: 200, costo_usd: 0.001 },
+        { agent: 'expense', tokens_in: 500, tokens_out: 60, cost_usd: 0.0003 },
+        { agent: 'expense', tokens_in: 400, tokens_out: 40, cost_usd: 0.0002 },
+        { agent: 'email', tokens_in: 1000, tokens_out: 200, cost_usd: 0.001 },
     ];
     const summary = await getUsageSummary(fakeSupabase({ rows }));
 

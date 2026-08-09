@@ -90,7 +90,7 @@ export async function handleIncomingMessage(args) {
     //    default to the expense agent (its historical owner).
     const pending = await getPending(supabase, userPhone, confirmationWindowMinutes);
     if (pending) {
-        const owner = AGENTS_BY_DOMAIN[pending.dominio] ?? AGENTS_BY_DOMAIN[EXPENSE_DOMAIN];
+        const owner = AGENTS_BY_DOMAIN[pending.domain] ?? AGENTS_BY_DOMAIN[EXPENSE_DOMAIN];
         await owner.handlePendingReply({
             supabase,
             ai,

@@ -1,18 +1,16 @@
-const TABLE = 'confirmaciones_pendientes';
+const TABLE = 'pending_confirmations';
 const DEFAULT_WINDOW_MINUTES = 30;
-
-// Table and column names below stay in Spanish: they're the live Supabase
-// schema (see README / deploy notes), not just internal naming.
 
 // Returns the user's pending confirmation if it exists and hasn't expired.
 // The TTL is applied here (not in the database): a pending row older than the
 // window is deleted and treated as nonexistent, so an unanswered question
-// doesn't "trap" the user forever.
+// doesn't "trap" the user forever. The returned row carries `domain` (which
+// agent asked), `reason`, and `payload`.
 export async function getPending(supabase, phone, windowMinutes = DEFAULT_WINDOW_MINUTES) {
     const { data, error } = await supabase
         .from(TABLE)
         .select('*')
-        .eq('telefono', phone)
+        .eq('phone', phone)
         .maybeSingle();
 
     if (error) {
@@ -33,28 +31,27 @@ export async function getPending(supabase, phone, windowMinutes = DEFAULT_WINDOW
 // can only be one open question per number (shared across agents — fine for a
 // single-user bot), and saving a new one resets the TTL clock.
 //
-// `domain` records which agent asked the question (column `dominio`) so a bare
-// reply ("2", "sí") can be routed back to that agent. It defaults to the
-// expense domain to stay backward-compatible with the original single-agent
-// caller.
+// `domain` records which agent asked the question so a bare reply ("2", "sí")
+// can be routed back to that agent. It defaults to the expense domain to stay
+// backward-compatible with the original single-agent caller.
 export async function savePending(supabase, { phone, payload, reason, domain = 'expense' }) {
     const { error } = await supabase
         .from(TABLE)
         .upsert(
             {
-                telefono: phone,
+                phone,
                 payload,
-                motivo: reason,
-                dominio: domain,
+                reason,
+                domain,
                 created_at: new Date().toISOString(),
             },
-            { onConflict: 'telefono' }
+            { onConflict: 'phone' }
         );
     if (error) throw error;
 }
 
 export async function deletePending(supabase, phone) {
-    const { error } = await supabase.from(TABLE).delete().eq('telefono', phone);
+    const { error } = await supabase.from(TABLE).delete().eq('phone', phone);
     if (error) {
         console.error('❌ Error deleting pending confirmation:', error);
     }
