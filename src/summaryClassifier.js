@@ -48,6 +48,9 @@ export async function classifySenders(ai, { senders, categories }, model) {
         const completion = await ai.chat.completions.create({
             messages: [{ role: 'user', content: buildSummaryPrompt(senders, categories) }],
             model,
+            // Attribution for the usage/cost ledger (email agent's domain).
+            // Stripped by the client wrapper before the request is sent.
+            _agentTag: 'email',
             response_format: { type: 'json_object' },
             temperature: 0,
         });

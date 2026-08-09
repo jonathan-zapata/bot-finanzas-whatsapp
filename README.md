@@ -32,6 +32,12 @@ src/
   messageHandler.js            Level-1 router: idempotency → pending → prefix dispatch
   responseParser.js            Interprets the user's yes/no answers
 
+  # LLM cost tracking (both agents)
+  llmRateLimitLog.js           Wraps the LLM client: logs rate-limit headers + reports token usage
+  llmPricing.js                Per-model Groq token prices → USD cost of a call
+  llmUsageRepo.js              Writes/reads the `uso_llm` ledger (per-agent tokens + cost)
+  usageReport.js               Renders the `email costos` report
+
   # Expense agent (default)
   expenseAgent.js              Expense flow as an agent (extract → dedupe → save)
   aiExtractor.js               LLM prompt + Zod validation of the extracted expense
@@ -69,11 +75,18 @@ Message the bot starting with **`email`** followed by what you want:
 | `email recomendaciones` | Proposed folder structure + which rules hide mail vs. reduce noise |
 | `email configurar categorías` / `email reconstruir categorías` | Build/rebuild your category taxonomy (confirm once) |
 | `email actualizar` | Force a fresh pull, bypassing the ~2h cache |
+| `email costos` | LLM cost report: accumulated Groq spend, broken down by agent (expense + email) |
 | `email ayuda` | List what the email agent can do |
 
 If your request is ambiguous, the bot replies with a short numbered menu; answer with the number. All actions are **read-only**: phase 1 requests only `Mail.Read` + `MailboxSettings.Read`, so Microsoft itself enforces that nothing can be modified. Only email **metadata** (sender, subject, dates, flags, folder) is ever read — never message bodies.
 
 Setup requires an Azure app registration and GCP Secret Manager for the rotating refresh token — see [`docs/email-agent-deploy.md`](docs/email-agent-deploy.md). Migrating the bot's static secrets to Secret Manager is documented in [`docs/secret-manager-migration.md`](docs/secret-manager-migration.md).
+
+## LLM cost tracking
+
+Every LLM (Groq) call is metered. The client wrapper (`src/llmRateLimitLog.js`) reads each completion's `usage`, computes a USD cost from the model's price (`src/llmPricing.js`), and writes one row per call to the `uso_llm` table — tagged by the agent that made it (`expense` or `email`). Recording is **best-effort**: a failure there is logged and swallowed, never breaking the reply.
+
+Ask the bot **`email costos`** for the accumulated spend, broken down by agent. The figure is an *estimate* from Groq's published prices; while you're on the free tier the amount actually billed is **US$0** (the report says so). Prices live in `src/llmPricing.js` — add a model there to track it; an unpriced model is recorded at $0 rather than guessed. Run the `uso_llm` migration in `supabase/migrations/` before relying on the report.
 
 ## Requirements
 

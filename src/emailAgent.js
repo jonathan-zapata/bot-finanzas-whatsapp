@@ -5,6 +5,8 @@ import { proposeTaxonomy } from './taxonomyBuilder.js';
 import { classifySenders as classifySendersReal } from './summaryClassifier.js';
 import { collectSenders, formatSummaryReport } from './summaryReport.js';
 import { formatRecommendationsReport } from './recommendationsReport.js';
+import { getUsageSummary as getUsageSummaryReal } from './llmUsageRepo.js';
+import { formatUsageReport } from './usageReport.js';
 import { parseResponse } from './responseParser.js';
 import {
     savePending as savePendingReal,
@@ -43,6 +45,7 @@ const ACTION_CATALOG = [
     { id: 'setup_categories', menu: 'Configurar o reconstruir tus categorías' },
     { id: 'connect', menu: 'Conectar tu cuenta de Microsoft (Outlook/Hotmail)' },
     { id: 'refresh', menu: 'Actualizar los datos (traer correo nuevo)' },
+    { id: 'costs', menu: 'Ver el costo acumulado de la API (por agente)' },
     { id: 'help', menu: 'Ver qué puedo hacer' },
 ];
 
@@ -118,6 +121,11 @@ async function runEmailAction(action, ctx) {
         return;
     }
 
+    if (action === 'costs') {
+        await handleCosts(ctx);
+        return;
+    }
+
     if (MAILBOX_ACTIONS.has(action)) {
         // `email refresh` bypasses the ~2h cache; everything else serves it.
         const data = await loadMailbox(ctx, { forceRefresh: action === 'refresh' });
@@ -164,6 +172,17 @@ async function handleConnect(ctx) {
             url +
             '\n\nCuando termines, volvé y pedime lo que quieras.'
     );
+}
+
+// Reports the accumulated LLM (Groq) cost, broken down by agent. Reads only the
+// `uso_llm` ledger — no mailbox, no Graph, no LLM call — so it works even before
+// a Microsoft account is connected. The figure is an estimate (see usageReport).
+async function handleCosts(ctx) {
+    const { supabase, whatsapp, userPhone, deps = {} } = ctx;
+    const { getUsageSummary = getUsageSummaryReal } = deps;
+
+    const summary = await getUsageSummary(supabase);
+    await whatsapp.sendMessage(userPhone, formatUsageReport(summary));
 }
 
 // Loads the (cached or fresh) mailbox metadata for a mailbox action, returning

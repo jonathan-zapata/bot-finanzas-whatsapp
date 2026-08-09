@@ -23,7 +23,7 @@ test('maps a clear request to the right action', async () => {
 });
 
 test('accepts every action in the closed enum', async () => {
-    for (const id of ['xray', 'recommendations', 'setup_categories', 'refresh', 'connect', 'help']) {
+    for (const id of ['xray', 'recommendations', 'setup_categories', 'refresh', 'connect', 'costs', 'help']) {
         const action = await classifyEmailIntent(fakeAi(`{"action":"${id}"}`), 'x', 'm');
         assert.equal(action, id);
     }
